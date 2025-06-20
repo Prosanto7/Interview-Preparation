@@ -39,7 +39,7 @@
 | `docker run -d <image>` | Run a container in detached mode (in the background). |
 | `docker run -p <host_port>:<container_port> <image>` | Map host port 8080 to container port 80. |
 | `docker run -e <var_name>=<var_value> <container>` | Set environment variables in a container |
-| `docker run --name <container_name> <image> | Run container with custom name |
+| `docker run --name <container_name> <image>` | Run container with custom name |
 | `docker ps` | List running containers. |
 | `docker ps -a` | List all containers (including stopped). |
 | `docker stop <container_id>` | Stop a running container. |
