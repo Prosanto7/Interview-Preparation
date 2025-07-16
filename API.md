@@ -233,3 +233,126 @@ PUT /products/45
 
 ---
 
+A **PATCH** request is an HTTP method used to **partially update** a resource on the server. It is commonly used in RESTful APIs when you only want to modify a subset of a resource’s properties, **without replacing the entire object**, which you would do with a `PUT` request.
+
+---
+
+### 🔑 **Key Characteristics of PATCH**
+
+| Feature                 | Description                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| **HTTP Method**         | PATCH                                                                                      |
+| **Purpose**             | Partial update of an existing resource                                                     |
+| **Idempotent**          | ✅ Typically Yes (sending same PATCH request repeatedly results in the same resource state) |
+| **Request Body**        | Only the fields that need to be updated                                                    |
+| **Common Status Codes** | `200 OK`, `204 No Content`, `400 Bad Request`, `404 Not Found`, `409 Conflict`             |
+
+---
+
+### 📘 **How PATCH Works**
+
+* The client sends **only the changed fields** in the request body.
+* The server updates those fields **without touching** the rest of the resource.
+* PATCH does **not replace** the resource; it **modifies** it.
+
+---
+
+### 📦 **Example: Updating a User Email**
+
+#### ✅ Request:
+
+```http
+PATCH /users/123 HTTP/1.1
+Host: example.com
+Content-Type: application/json
+
+{
+  "email": "new.email@example.com"
+}
+```
+
+#### 🔄 Server Behavior:
+
+* Finds user with ID `123`.
+* Updates only the `email` field.
+* Leaves other fields (`name`, `address`, etc.) untouched.
+
+#### ✅ Response:
+
+```http
+HTTP/1.1 200 OK
+```
+
+or if no content is returned:
+
+```http
+HTTP/1.1 204 No Content
+```
+
+---
+
+### 🆚 PATCH vs PUT
+
+| Feature         | PATCH                   | PUT                          |
+| --------------- | ----------------------- | ---------------------------- |
+| **Update Type** | Partial                 | Full (replace entire object) |
+| **Idempotent**  | ✅ Typically (should be) | ✅ Yes                        |
+| **Use Case**    | Update specific fields  | Update all fields            |
+| **Payload**     | Only changed fields     | Full object data             |
+
+---
+
+### 🔐 Security Considerations
+
+* Like other modifying requests (`PUT`, `DELETE`), **authentication** and **authorization** are required.
+* Input should be **validated** to avoid unwanted changes.
+
+---
+
+### ✅ Best Practices
+
+1. Use PATCH when updating **only a few fields**.
+2. Ensure the request is **idempotent** if your system requires reliability.
+3. Validate the fields in the request — don't allow arbitrary field updates.
+4. Return a proper HTTP status code:
+
+   * `200 OK` with updated resource
+   * `204 No Content` if successful but no body returned
+   * `400` for bad request
+   * `404` if the resource does not exist
+
+---
+
+### 🔧 Example in REST API
+
+#### Endpoint:
+
+```http
+PATCH /products/45
+```
+
+#### Payload:
+
+```json
+{
+  "price": 119.99
+}
+```
+
+> This will only update the `price` of product `45`, keeping `name`, `description`, `stock`, etc., unchanged.
+
+---
+
+### 🔧 Example with Axios in JavaScript
+
+```js
+axios.patch('/users/123', {
+  email: 'updated@email.com'
+})
+.then(response => console.log('Updated:', response.data))
+.catch(error => console.error(error));
+```
+
+---
+
+Would you like examples for **Laravel**, **Node.js (Express)**, or **Python (Flask/FastAPI)**?
