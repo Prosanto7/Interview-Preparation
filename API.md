@@ -126,3 +126,110 @@ Think of a **restaurant**:
 4. **External APIs** — e.g., SMS via Twilio, maps via Google
 
 ---
+
+
+
+A **PUT** request is one of the standard HTTP methods used in web development and RESTful APIs. It is mainly used to **update** or **replace** a resource on the server.
+
+---
+
+### 🔑 **Key Characteristics of PUT**
+
+| Feature                 | Description                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| **HTTP Method**         | PUT                                                                                           |
+| **Purpose**             | Create or **replace** a resource at a specific URI                                            |
+| **Idempotent**          | ✅ Yes — sending the same PUT request multiple times has the same effect as sending it once    |
+| **Request Body**        | Contains the full representation of the resource to update or create                          |
+| **Common Status Codes** | `200 OK`, `201 Created`, `204 No Content`, `400 Bad Request`, `404 Not Found`, `409 Conflict` |
+
+---
+
+### 📘 **How PUT Works**
+
+A PUT request is used when:
+
+* You want to **update an existing resource**.
+* Or, if the resource does not exist, to **create it** at the specified URI (depends on the API design).
+
+---
+
+### 📦 **Example: Updating a User Resource**
+
+#### ✅ Request:
+
+```http
+PUT /users/123 HTTP/1.1
+Host: example.com
+Content-Type: application/json
+
+{
+  "id": 123,
+  "name": "John Doe",
+  "email": "john.doe@example.com"
+}
+```
+
+#### 🔄 Server Behavior:
+
+* Checks if user with ID `123` exists.
+* If exists, replaces the entire resource with new data.
+* If not (depending on design), may create a new user with ID `123`.
+
+#### ✅ Response:
+
+```http
+HTTP/1.1 200 OK
+```
+
+or if created:
+
+```http
+HTTP/1.1 201 Created
+Location: /users/123
+```
+
+---
+
+### 🆚 PUT vs PATCH
+
+| Feature         | PUT                                | PATCH                     |
+| --------------- | ---------------------------------- | ------------------------- |
+| **Purpose**     | Full update                        | Partial update            |
+| **Idempotent**  | ✅ Yes                              | ✅ Yes (typically)         |
+| **Payload**     | Full representation of resource    | Only the fields to update |
+| **Performance** | Can be heavier due to full payload | Lighter                   |
+
+---
+
+### 🔐 Security Considerations
+
+* PUT requests often modify resources and **should be protected** using authentication/authorization.
+* They **should not be cached** unless explicitly allowed with headers like `Cache-Control`.
+
+---
+
+### ✅ Best Practices
+
+1. **Use PUT to update or create** a resource at a specific URI.
+2. **Make PUT idempotent** — same result even if sent multiple times.
+3. Send the **complete resource**, not just the fields you want to change.
+4. Validate and sanitize input to avoid malicious changes.
+5. Respond with appropriate status codes (e.g., `204` for success without content, `400` for bad input).
+
+---
+
+### 🔧 Common Use Case in REST APIs
+
+```bash
+# Update a product
+PUT /products/45
+{
+  "id": 45,
+  "name": "Smart Watch",
+  "price": 129.99
+}
+```
+
+---
+
