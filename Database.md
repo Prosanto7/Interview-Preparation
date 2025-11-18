@@ -1010,3 +1010,483 @@ Durability is achieved using **logs**, **backups**, and **write-ahead logging (W
 
 ---
 
+## 🔄 Transaction Isolation Levels
+
+Understanding isolation levels is crucial for concurrent database operations.
+
+| Isolation Level | Dirty Read | Non-Repeatable Read | Phantom Read | Performance |
+|-----------------|------------|---------------------|--------------|-------------|
+| **READ UNCOMMITTED** | ✅ Possible | ✅ Possible | ✅ Possible | Fastest |
+| **READ COMMITTED** | ❌ No | ✅ Possible | ✅ Possible | Fast |
+| **REPEATABLE READ** | ❌ No | ❌ No | ✅ Possible | Medium |
+| **SERIALIZABLE** | ❌ No | ❌ No | ❌ No | Slowest |
+
+### Isolation Problems Explained
+
+#### 1. **Dirty Read**
+Reading uncommitted changes from another transaction.
+
+```sql
+-- Transaction A
+BEGIN;
+UPDATE products SET price = 100 WHERE id = 1;
+-- Not committed yet
+
+-- Transaction B reads the uncommitted change
+SELECT price FROM products WHERE id = 1; -- Sees 100
+
+-- Transaction A rolls back
+ROLLBACK;
+
+-- Transaction B read "dirty" data that never existed
+```
+
+#### 2. **Non-Repeatable Read**
+Same query returns different results within a transaction.
+
+```sql
+-- Transaction A
+BEGIN;
+SELECT price FROM products WHERE id = 1; -- Returns 100
+
+-- Transaction B updates and commits
+UPDATE products SET price = 150 WHERE id = 1;
+COMMIT;
+
+-- Transaction A reads again
+SELECT price FROM products WHERE id = 1; -- Now returns 150 (different!)
+```
+
+#### 3. **Phantom Read**
+New rows appear in subsequent reads.
+
+```sql
+-- Transaction A
+BEGIN;
+SELECT COUNT(*) FROM orders WHERE user_id = 5; -- Returns 3
+
+-- Transaction B inserts and commits
+INSERT INTO orders (user_id) VALUES (5);
+COMMIT;
+
+-- Transaction A counts again
+SELECT COUNT(*) FROM orders WHERE user_id = 5; -- Now returns 4 (phantom row!)
+```
+
+---
+
+## 🔐 Database Constraints
+
+Constraints ensure data integrity and validity.
+
+### Types of Constraints
+
+#### 1. **NOT NULL**
+```sql
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    email VARCHAR(100) NOT NULL,
+    name VARCHAR(50) NOT NULL
+);
+```
+
+#### 2. **UNIQUE**
+```sql
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    email VARCHAR(100) UNIQUE,
+    username VARCHAR(50) UNIQUE
+);
+```
+
+#### 3. **CHECK**
+```sql
+CREATE TABLE products (
+    id INT PRIMARY KEY,
+    price DECIMAL(10,2) CHECK (price > 0),
+    stock INT CHECK (stock >= 0),
+    discount INT CHECK (discount BETWEEN 0 AND 100)
+);
+```
+
+#### 4. **DEFAULT**
+```sql
+CREATE TABLE orders (
+    id INT PRIMARY KEY,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### 5. **FOREIGN KEY with Actions**
+```sql
+CREATE TABLE orders (
+    id INT PRIMARY KEY,
+    user_id INT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE CASCADE           -- Delete orders when user is deleted
+        ON UPDATE CASCADE           -- Update orders when user id changes
+);
+
+-- Other options:
+-- ON DELETE SET NULL
+-- ON DELETE SET DEFAULT
+-- ON DELETE RESTRICT (prevent deletion)
+-- ON DELETE NO ACTION
+```
+
+---
+
+## 🎯 Advanced Indexing Strategies
+
+### Types of Indexes
+
+#### 1. **Single Column Index**
+```sql
+CREATE INDEX idx_email ON users(email);
+```
+
+#### 2. **Composite Index**
+```sql
+CREATE INDEX idx_name_age ON users(last_name, first_name, age);
+
+-- Query optimization follows "leftmost prefix" rule
+SELECT * FROM users WHERE last_name = 'Smith'; -- Uses index ✅
+SELECT * FROM users WHERE first_name = 'John'; -- Doesn't use index ❌
+SELECT * FROM users WHERE last_name = 'Smith' AND first_name = 'John'; -- Uses index ✅
+```
+
+#### 3. **Unique Index**
+```sql
+CREATE UNIQUE INDEX idx_unique_email ON users(email);
+```
+
+#### 4. **Full-Text Index**
+```sql
+-- For text search
+CREATE FULLTEXT INDEX idx_description ON products(description);
+
+SELECT * FROM products WHERE MATCH(description) AGAINST('laptop computer');
+```
+
+#### 5. **Partial Index (PostgreSQL)**
+```sql
+-- Index only active users
+CREATE INDEX idx_active_users ON users(email) WHERE active = true;
+```
+
+#### 6. **Covering Index**
+```sql
+-- Index includes all columns needed for query
+CREATE INDEX idx_user_details ON users(id, name, email);
+
+-- This query uses only the index (doesn't touch table)
+SELECT id, name, email FROM users WHERE id = 123;
+```
+
+### Index Best Practices
+
+✅ **Do:**
+- Index foreign keys
+- Index columns in WHERE, JOIN, ORDER BY clauses
+- Index columns with high cardinality (many unique values)
+- Monitor slow queries and add indexes
+
+❌ **Don't:**
+- Over-index (slows down INSERT/UPDATE/DELETE)
+- Index small tables
+- Index columns with low cardinality (e.g., boolean, gender)
+- Index frequently updated columns unnecessarily
+
+---
+
+## 🔍 Query Optimization Techniques
+
+### 1. **Use EXPLAIN**
+
+```sql
+EXPLAIN SELECT * FROM orders 
+WHERE user_id = 123 AND status = 'pending';
+
+-- Shows:
+-- - Which indexes are used
+-- - Number of rows scanned
+-- - Query execution plan
+```
+
+### 2. **Avoid SELECT ***
+
+❌ **Bad:**
+```sql
+SELECT * FROM users WHERE id = 123;
+```
+
+✅ **Good:**
+```sql
+SELECT id, name, email FROM users WHERE id = 123;
+```
+
+### 3. **Use Proper JOINs**
+
+❌ **Bad (Implicit Join):**
+```sql
+SELECT * FROM orders, users 
+WHERE orders.user_id = users.id;
+```
+
+✅ **Good (Explicit Join):**
+```sql
+SELECT o.*, u.name 
+FROM orders o
+INNER JOIN users u ON o.user_id = u.id;
+```
+
+### 4. **Use Indexes in WHERE**
+
+```sql
+-- Create index
+CREATE INDEX idx_created_at ON orders(created_at);
+
+-- Use indexed column
+SELECT * FROM orders 
+WHERE created_at >= '2024-01-01';
+```
+
+### 5. **Avoid Functions on Indexed Columns**
+
+❌ **Bad (Prevents index usage):**
+```sql
+SELECT * FROM users WHERE YEAR(created_at) = 2024;
+```
+
+✅ **Good (Uses index):**
+```sql
+SELECT * FROM users 
+WHERE created_at >= '2024-01-01' 
+  AND created_at < '2025-01-01';
+```
+
+### 6. **Use LIMIT for Pagination**
+
+```sql
+-- Efficient pagination
+SELECT * FROM products 
+ORDER BY id 
+LIMIT 20 OFFSET 40;
+
+-- Even better with cursor-based pagination
+SELECT * FROM products 
+WHERE id > 1000 
+ORDER BY id 
+LIMIT 20;
+```
+
+### 7. **Batch Operations**
+
+❌ **Bad (Many queries):**
+```sql
+INSERT INTO users (name) VALUES ('John');
+INSERT INTO users (name) VALUES ('Jane');
+INSERT INTO users (name) VALUES ('Bob');
+```
+
+✅ **Good (Single query):**
+```sql
+INSERT INTO users (name) VALUES 
+    ('John'),
+    ('Jane'),
+    ('Bob');
+```
+
+---
+
+## 🗂️ Database Normalization Deep Dive
+
+### Normal Forms Summary
+
+| Normal Form | Rule | Example Violation |
+|-------------|------|-------------------|
+| **1NF** | Atomic values, no repeating groups | Storing multiple phone numbers in one field |
+| **2NF** | 1NF + No partial dependencies | Non-key attributes depend on part of composite key |
+| **3NF** | 2NF + No transitive dependencies | Storing city and country (country depends on city) |
+| **BCNF** | 3NF + Every determinant is a candidate key | Special case of 3NF |
+
+### Example: Normalization Process
+
+#### Unnormalized Data
+```
+Orders Table:
+order_id | customer_name | items                  | prices
+1        | John          | Laptop, Mouse, Keyboard | 1000, 20, 50
+```
+
+#### 1NF (First Normal Form)
+```
+Orders Table:
+order_id | customer_name | item     | price
+1        | John          | Laptop   | 1000
+1        | John          | Mouse    | 20
+1        | John          | Keyboard | 50
+```
+
+#### 2NF & 3NF (Normalized)
+```
+Customers:
+customer_id | name
+1           | John
+
+Orders:
+order_id | customer_id | order_date
+1        | 1           | 2024-01-15
+
+Order_Items:
+order_id | product_id | quantity | price
+1        | 101        | 1        | 1000
+1        | 102        | 1        | 20
+
+Products:
+product_id | name     | price
+101        | Laptop   | 1000
+102        | Mouse    | 20
+```
+
+### When to Denormalize
+
+**Denormalization** is intentionally introducing redundancy for performance.
+
+**When to consider:**
+- Read-heavy applications
+- Reporting/analytics
+- Caching frequently accessed data
+- Reducing complex joins
+
+**Example:**
+```sql
+-- Denormalized for faster queries
+CREATE TABLE order_summary (
+    order_id INT,
+    customer_name VARCHAR(100),  -- Redundant
+    total_amount DECIMAL(10,2),  -- Calculated
+    item_count INT               -- Calculated
+);
+```
+
+---
+
+## 🔄 Database Replication & Scaling
+
+### Replication Types
+
+#### 1. **Master-Slave (Primary-Replica)**
+
+```
+Master (Write) ──┐
+                 ├──> Slave 1 (Read)
+                 ├──> Slave 2 (Read)
+                 └──> Slave 3 (Read)
+```
+
+**Use case:** Read-heavy applications
+
+#### 2. **Master-Master**
+
+```
+Master 1 ←──→ Master 2
+```
+
+**Use case:** High availability, multi-region
+
+#### 3. **Multi-Master with Conflict Resolution**
+
+Handle write conflicts:
+- Last Write Wins (LWW)
+- Application-level resolution
+- CRDT (Conflict-free Replicated Data Types)
+
+---
+
+### Scaling Strategies
+
+#### Vertical Scaling (Scale Up)
+- Add more CPU, RAM, SSD
+- **Pros:** Simple
+- **Cons:** Hardware limits, expensive, single point of failure
+
+#### Horizontal Scaling (Scale Out)
+- Add more database servers
+- **Pros:** Unlimited scaling, better fault tolerance
+- **Cons:** Complex, consistency challenges
+
+#### Sharding (Horizontal Partitioning)
+
+Split data across multiple databases.
+
+```sql
+-- Users with ID 1-1000 → Shard 1
+-- Users with ID 1001-2000 → Shard 2
+-- Users with ID 2001-3000 → Shard 3
+```
+
+**Sharding Strategies:**
+1. **Range-based:** By ID, date
+2. **Hash-based:** Hash(user_id) % num_shards
+3. **Geographic:** By location
+4. **Directory-based:** Lookup table
+
+---
+
+## 📚 Resources
+
+### Official Documentation
+- [MySQL Documentation](https://dev.mysql.com/doc/)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
+- [MongoDB Documentation](https://docs.mongodb.com/)
+- [Redis Documentation](https://redis.io/documentation)
+
+### Books
+- **"Database Internals"** by Alex Petrov
+- **"Designing Data-Intensive Applications"** by Martin Kleppmann
+- **"SQL Performance Explained"** by Markus Winand
+- **"High Performance MySQL"** by Baron Schwartz
+
+### Online Courses
+- [Stanford Database Course (CS145)](https://cs145-fa19.github.io/)
+- [CMU Database Systems (15-445)](https://15445.courses.cs.cmu.edu/)
+- [SQL Tutorial - W3Schools](https://www.w3schools.com/sql/)
+- [PostgreSQL Tutorial](https://www.postgresqltutorial.com/)
+
+### Practice Platforms
+- [LeetCode Database](https://leetcode.com/problemset/database/)
+- [HackerRank SQL](https://www.hackerrank.com/domains/sql)
+- [SQLZoo](https://sqlzoo.net/)
+- [Mode SQL Tutorial](https://mode.com/sql-tutorial/)
+
+---
+
+## ✅ Database Interview Checklist
+
+### Fundamentals
+- [ ] Understand ACID properties
+- [ ] Know different types of keys
+- [ ] Master JOIN operations
+- [ ] Understand normalization (1NF, 2NF, 3NF)
+- [ ] Grasp indexing concepts
+
+### Intermediate
+- [ ] Transaction isolation levels
+- [ ] Query optimization techniques
+- [ ] Index types and when to use them
+- [ ] Constraints and their purposes
+- [ ] Stored procedures and triggers
+
+### Advanced
+- [ ] Replication strategies
+- [ ] Sharding and partitioning
+- [ ] CAP theorem
+- [ ] Database scaling patterns
+- [ ] NoSQL vs SQL trade-offs
+
+---
+
+**Remember:** Database design is about trade-offs. There's no one-size-fits-all solution. Understand your requirements and choose accordingly!
+
