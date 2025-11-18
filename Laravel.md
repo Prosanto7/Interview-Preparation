@@ -509,3 +509,14 @@ And language files in `resources/lang/{lang}/`.
 
 ---
 
+## 📚 References
+
+- Laravel Docs (latest): https://laravel.com/docs
+- Middleware: https://laravel.com/docs/middleware
+- Eloquent ORM: https://laravel.com/docs/eloquent
+- Validation & Form Requests: https://laravel.com/docs/validation
+- Queues: https://laravel.com/docs/queues
+- Events & Listeners: https://laravel.com/docs/events
+- Sanctum: https://laravel.com/docs/sanctum
+- Passport: https://laravel.com/docs/passport
+

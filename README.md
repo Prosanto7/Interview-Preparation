@@ -6,6 +6,39 @@
 
 ---
 
+## 📚 All Topics Index (Quick Links)
+
+- Fundamentals
+   - OOP: [OOP.md](OOP.md)
+   - Data Structures: [Data-Structures.md](Data-Structures.md)
+   - Algorithms: [Algorithm.md](Algorithm.md)
+   - Design Patterns: [Design-Patterns.md](Design-Patterns.md)
+- Backend & APIs
+   - API Basics and Styles: [API.md](API.md)
+   - Tokens & Auth Basics: [Tokens.md](Tokens.md)
+   - Security Best Practices: [Security.md](Security.md)
+- Databases & Storage
+   - Relational Databases & SQL: [Database.md](Database.md)
+   - Redis (Cache/Store/Broker): [Redis.md](Redis.md)
+- Systems & Architecture
+   - System Design: [System-Design.md](System-Design.md)
+   - Architecture (Monolith vs Microservices): [Architecture.md](Architecture.md)
+   - Internet Basics (How the web works): [Internet.md](Internet.md)
+   - Servers (Apache vs Nginx): [Server.md](Server.md)
+- Tooling & DevOps
+   - Git & Version Control: [Git.md](Git.md)
+   - Linux & CLI Essentials: [Linux.md](Linux.md)
+   - Docker & Containers: [Docker.md](Docker.md)
+- Languages & Frameworks
+   - PHP Language: [PHP.md](PHP.md)
+   - Laravel Framework: [Laravel.md](Laravel.md)
+- Quality
+   - Testing Guide (Unit, Integration, E2E, TDD): [Testing.md](Testing.md)
+
+Tip: Click any link above to jump directly to the topic.
+
+---
+
 ## 📖 Table of Contents
 
 - [About This Repository](#-about-this-repository)
@@ -80,7 +113,7 @@ Master:
 | **Object-Oriented Programming** | [OOP.md](OOP.md) | 🟢 Beginner | Classes, inheritance, polymorphism, encapsulation |
 | **Data Structures** | [Data-Structures.md](Data-Structures.md) | 🟢 Beginner | Arrays, linked lists, trees, graphs, hash tables |
 | **Algorithms** | [Algorithm.md](Algorithm.md) | 🟡 Intermediate | Sorting, searching, time complexity |
-| **Design Patterns** | _(Coming Soon)_ | 🟡 Intermediate | Singleton, Factory, Observer, Strategy |
+| **Design Patterns** | [Design-Patterns.md](Design-Patterns.md) | 🟡 Intermediate | Singleton, Factory, Strategy, Observer, more |
 
 ---
 

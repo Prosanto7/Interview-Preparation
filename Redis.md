@@ -323,3 +323,10 @@ GET http://localhost:3000/posts
 🧠 Serving from Redis cache
 ```
 
+## 📚 References
+
+- Redis Documentation: https://redis.io/docs/latest/
+- Redis Commands Reference: https://redis.io/docs/latest/commands/
+- Redis Data Types: https://redis.io/docs/latest/develop/data-types/
+- Redis Persistence (RDB/AOF): https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
+

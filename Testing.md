@@ -39,7 +39,7 @@
 ### Testing Pyramid
 
 ```
-         /\
+         / \
         /E2E\
        /------\
       /  API   \

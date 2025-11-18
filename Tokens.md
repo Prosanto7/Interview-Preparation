@@ -174,3 +174,13 @@ Authorization: Bearer YOUR_PERSONAL_ACCESS_TOKEN
 - Use **PATs** for developer integrations.
 
 ---
+
+## 📚 References
+
+- JWT (RFC 7519): https://datatracker.ietf.org/doc/html/rfc7519
+- OAuth 2.0 (RFC 6749): https://datatracker.ietf.org/doc/html/rfc6749
+- OAuth 2.0 Bearer Token (RFC 6750): https://datatracker.ietf.org/doc/html/rfc6750
+- OWASP CSRF Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+- OWASP Session Management: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+- Laravel Sanctum: https://laravel.com/docs/sanctum
+- Laravel Passport: https://laravel.com/docs/passport

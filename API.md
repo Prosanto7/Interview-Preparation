@@ -158,10 +158,15 @@ A PUT request is used when:
 
 #### ✅ Request:
 
-```http
-PUT /users/123 HTTP/1.1
-Host: example.com
-Content-Type: application/json
+---
+
+## 🧭 HTTP Methods Deep Dive
+
+This section clarifies when to use PUT vs PATCH in RESTful APIs and how they differ.
+
+### PUT
+
+A **PUT** request is one of the standard HTTP methods used in web development and RESTful APIs. It is mainly used to **update** or **replace** a resource on the server.
 
 {
   "id": 123,
@@ -171,7 +176,6 @@ Content-Type: application/json
 ```
 
 #### 🔄 Server Behavior:
-
 * Checks if user with ID `123` exists.
 * If exists, replaces the entire resource with new data.
 * If not (depending on design), may create a new user with ID `123`.
@@ -232,6 +236,8 @@ PUT /products/45
 ```
 
 ---
+
+### PATCH
 
 A **PATCH** request is an HTTP method used to **partially update** a resource on the server. It is commonly used in RESTful APIs when you only want to modify a subset of a resource’s properties, **without replacing the entire object**, which you would do with a `PUT` request.
 
@@ -356,3 +362,14 @@ axios.patch('/users/123', {
 ---
 
 Would you like examples for **Laravel**, **Node.js (Express)**, or **Python (Flask/FastAPI)**?
+
+---
+
+## 📚 References
+
+- MDN: HTTP request methods — https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
+- RFC 7231 (HTTP/1.1 Semantics): PUT — https://datatracker.ietf.org/doc/html/rfc7231#section-4.3.4
+- RFC 5789 (PATCH Method) — https://datatracker.ietf.org/doc/html/rfc5789
+- GraphQL Official — https://graphql.org/
+- gRPC — https://grpc.io/docs/
+- WebSockets (RFC 6455) — https://datatracker.ietf.org/doc/html/rfc6455

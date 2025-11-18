@@ -53,10 +53,15 @@ In distributed systems, you can only guarantee **2 out of 3**:
 - **A**vailability - Every request gets a response (success/failure)
 - **P**artition Tolerance - System continues despite network failures
 
-**Examples:**
-- **CP Systems**: MongoDB, HBase, Redis (prioritize consistency)
-- **AP Systems**: Cassandra, CouchDB, DynamoDB (prioritize availability)
-- **CA Systems**: Traditional RDBMS (but not truly distributed)
+**Examples (with nuance):**
+- **CP systems (favor Consistency under partition):** HBase, MongoDB (with majority write concern), ZooKeeper, etcd, Consul
+- **AP systems (favor Availability under partition):** Cassandra, DynamoDB, Riak, CouchDB
+- **CA systems:** Single-node RDBMS like PostgreSQL/MySQL when not distributed (CAP assumes partitions may occur; true distributed systems must choose CP or AP when P happens)
+
+Notes:
+- There is no practical “CA” choice in a partition-tolerant distributed system; CA applies when there is no partition (e.g., single-node).
+- MongoDB can be tuned: with majority write/read concern it behaves CP; with relaxed concerns it may show more AP-like behavior.
+- Redis: Standalone Redis is CA (not partition-tolerant). Redis Cluster behavior depends on configuration (failover, coverage settings); treat classification as configuration-dependent rather than purely CP/AP.
 
 ---
 

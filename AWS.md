@@ -1116,6 +1116,14 @@ This ensures **controlled, layered access** — the internet never directly reac
 | **Best Practice** | Use least privilege and SG references      |
 
 ---
+## 📚 References
+
+- EC2: https://docs.aws.amazon.com/ec2/
+- RDS: https://docs.aws.amazon.com/rds/
+- S3: https://docs.aws.amazon.com/s3/
+- Security Groups: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+- EBS: https://docs.aws.amazon.com/ebs/
+- EFS: https://docs.aws.amazon.com/efs/
 
 ## 🧩 What is Amazon EBS?
 

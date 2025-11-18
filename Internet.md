@@ -107,3 +107,10 @@ Browser receives response, downloads assets
     ↓
 Browser renders and displays web page
 ```
+
+## 📚 References
+
+    - MDN Web Docs: HTTP — https://developer.mozilla.org/en-US/docs/Web/HTTP
+    - RFC 7231: HTTP/1.1 Semantics — https://datatracker.ietf.org/doc/html/rfc7231
+    - RFC 9110–9114: Updated HTTP Semantics and HTTP/2 — https://www.rfc-editor.org/rfc/rfc9110
+    - DNS (RFC 1034/1035) — https://www.rfc-editor.org/rfc/rfc1034 and https://www.rfc-editor.org/rfc/rfc1035

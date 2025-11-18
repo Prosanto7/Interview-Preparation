@@ -518,3 +518,13 @@ Yes! Often **sessions and cookies are used together** in real-world apps:
 | Use Case               | Preferences, light data     | Auth, cart, user sessions    |
 
 ---
+
+## 📚 References
+
+- PHP Manual: https://www.php.net/manual/en/
+- PHP Type Declarations: https://www.php.net/manual/en/functions.arguments.php#functions.arguments.type-declaration
+- PHP Exceptions: https://www.php.net/manual/en/language.exceptions.php
+- PHP Namespaces: https://www.php.net/manual/en/language.namespaces.php
+- PHP Attributes (PHP 8): https://www.php.net/manual/en/language.attributes.php
+- PHP JIT: https://wiki.php.net/rfc/jit
+- PSR Standards (PHP-FIG): https://www.php-fig.org/psr/

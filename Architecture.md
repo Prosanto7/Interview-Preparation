@@ -134,3 +134,9 @@ Each service is responsible for a specific business capability.
 Many systems **start as Monolithic** and **evolve into Microservices** as they grow in complexity and scale.
 
 ---
+## 📚 References
+
+- Fowler: Microservices — https://martinfowler.com/articles/microservices.html
+- Fowler: Monolith First — https://martinfowler.com/bliki/MonolithFirst.html
+- Nginx Microservices Guide — https://www.nginx.com/learn/microservices/
+- Twelve-Factor App — https://12factor.net/

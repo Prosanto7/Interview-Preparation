@@ -237,3 +237,10 @@ Yes! A **Docker container** can run **inside a VM**. This is common in cloud env
 If you're building a modern web app, REST API, or microservices system, **Docker is usually the better choice**. For running older apps, complex environments, or mixed-OS stacks, **VMs are more appropriate**.
 
 ---
+
+## 📚 References
+
+- Docker Documentation: https://docs.docker.com/
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
+- Docker Compose: https://docs.docker.com/compose/
+- Best practices for writing Dockerfiles: https://docs.docker.com/develop/develop-images/dockerfile_best-practices/

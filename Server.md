@@ -2,13 +2,13 @@
 
 ## 🌐 **Introduction**
 
-| Feature     | **Apache**                              | **Nginx**                                      |
-|-------------|------------------------------------------|------------------------------------------------|
-| Full Name   | Apache HTTP Server                      | Engine-X (pronounced “Engine-X”)              |
-| Initial Release | 1995                                | 2004                                           |
-| Developer   | Apache Software Foundation               | Igor Sysoev / Now F5 Inc.                     |
-| Written In  | C                                        | C                                              |
-| License     | Apache License 2.0                       | 2-clause BSD license                           |
+| Feature         | **Apache**                               | **Nginx**                                      |
+|-----------------|------------------------------------------|------------------------------------------------|
+| Full Name       | Apache HTTP Server                       | Engine-X (pronounced “Engine-X”)               |
+| Initial Release | 1995                                     | 2004                                           |
+| Developer       | Apache Software Foundation               | Igor Sysoev / Now F5 Inc.                      |
+| Written In      | C                                        | C                                              |
+| License         | Apache License 2.0                       | 2-clause BSD license                           |
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Feature             | Apache                                       | Nginx                                           |
 |---------------------|----------------------------------------------|-------------------------------------------------|
-| Request Handling    | Process/thread-based                        | Event-driven, asynchronous                      |
+| Request Handling    | Process/thread-based                         | Event-driven, asynchronous                      |
 | Concurrency Model   | `prefork`, `worker`, or `event` modules      | Non-blocking, single-threaded event loop        |
 | Static File Serving | Slower under high load                       | Extremely fast and efficient                    |
 | Dynamic Content     | Handles directly with modules                | Uses FastCGI or proxy to app servers            |
@@ -25,7 +25,7 @@
 
 ## 🚀 **Performance**
 
-| Scenario                    | Apache                              | Nginx                                      |
+| Scenario                    | Apache                              | Nginx                                       |
 |-----------------------------|--------------------------------------|--------------------------------------------|
 | Static File Performance     | Slower                              | Much faster due to event-based architecture |
 | Dynamic Content (PHP, etc.) | Direct or via mod_php               | FastCGI (external PHP processor)            |
@@ -35,21 +35,21 @@
 
 ## 🔧 **Configuration & Flexibility**
 
-| Feature                    | Apache                                | Nginx                                   |
+| Feature                    | Apache                                 | Nginx                                   |
 |----------------------------|----------------------------------------|-----------------------------------------|
-| `.htaccess` Support        | ✅ Yes                                  | ❌ No                                   |
-| Dynamic Module Loading     | ✅ Yes                                  | ✅ Yes (since version 1.9+)              |
-| Granular Directory Config  | ✅ Yes (`.htaccess`, per-directory)    | ❌ No, centralized config                |
+| `.htaccess` Support        | ✅ Yes                                 | ❌ No                                   |
+| Dynamic Module Loading     | ✅ Yes                                 | ✅ Yes (since version 1.9+)             |
+| Granular Directory Config  | ✅ Yes (`.htaccess`, per-directory)    | ❌ No, centralized config               |
 | Ease of Use                | Easier for beginners (familiar syntax) | Slightly steeper learning curve         |
 
 ---
 
 ## 🛡️ **Security**
 
-| Security Feature         | Apache                          | Nginx                                      |
-|--------------------------|----------------------------------|--------------------------------------------|
+| Security Feature         | Apache                          | Nginx                                       |
+|--------------------------|---------------------------------|---------------------------------------------|
 | TLS/SSL Support          | ✅ Yes                          | ✅ Yes                                      |
-| Rate Limiting            | Basic                          | Advanced built-in rate limiting features    |
+| Rate Limiting            | Basic                           | Advanced built-in rate limiting features    |
 | Web Application Firewall | ModSecurity supported           | ModSecurity via Nginx + ModSecurity combo   |
 
 ---
@@ -158,3 +158,10 @@ This gives you performance + compatibility benefits.
   - You’re working with Node.js, Python, or PHP-FPM backends
 
 ---
+
+## 📚 References
+
+- Apache HTTP Server Docs: https://httpd.apache.org/docs/
+- Nginx Documentation: https://nginx.org/en/docs/
+- Nginx Load Balancing: https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/
+- Apache mod_proxy: https://httpd.apache.org/docs/2.4/mod/mod_proxy.html
