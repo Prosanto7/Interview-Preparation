@@ -7,18 +7,19 @@
 ## 📚 Table of Contents
 
 1. [VPC (Virtual Private Cloud)](#-vpc-virtual-private-cloud)
-2. [Subnets](#-subnets)
-3. [Route Tables](#-route-tables)
-4. [Internet Gateway](#-internet-gateway)
-5. [Security Groups](#-security-groups)
-6. [EC2 (Elastic Compute Cloud)](#-ec2-elastic-compute-cloud)
-7. [Public vs Private EC2](#-public-vs-private-ec2)
-8. [Elastic IP](#-elastic-ip)
-9. [RDS (Relational Database Service)](#-rds-relational-database-service)
-10. [Private RDS](#-private-rds)
-11. [S3 (Simple Storage Service)](#-s3-simple-storage-service)
-12. [IAM (Identity and Access Management)](#-iam-identity-and-access-management)
-13. [References](#-references)
+2. [CIDR Block (Classless Inter-Domain Routing)](#-cidr-block-classless-inter-domain-routing)
+3. [Subnets](#-subnets)
+4. [Route Tables](#-route-tables)
+5. [Internet Gateway](#-internet-gateway)
+6. [Security Groups](#-security-groups)
+7. [EC2 (Elastic Compute Cloud)](#-ec2-elastic-compute-cloud)
+8. [Public vs Private EC2](#-public-vs-private-ec2)
+9. [Elastic IP](#-elastic-ip)
+10. [RDS (Relational Database Service)](#-rds-relational-database-service)
+11. [Private RDS](#-private-rds)
+12. [S3 (Simple Storage Service)](#-s3-simple-storage-service)
+13. [IAM (Identity and Access Management)](#-iam-identity-and-access-management)
+14. [References](#-references)
 
 ---
 
@@ -106,7 +107,428 @@ aws ec2 create-vpc --cidr-block 10.0.0.0/16
 
 ---
 
-## 📦 Subnets
+## � CIDR Block (Classless Inter-Domain Routing)
+
+### What is CIDR?
+
+**CIDR (Classless Inter-Domain Routing)** is a method for allocating IP addresses and routing that replaces the old classful network addressing architecture. It allows for more flexible and efficient IP address allocation.
+
+**Format:**
+```
+IP_Address/Prefix_Length
+Example: 10.0.0.0/16
+         ↑          ↑
+         |          └─ Number of network bits (subnet mask)
+         └──────────── Base IP address
+```
+
+### Why CIDR Matters in AWS
+
+In AWS, CIDR blocks are **fundamental** to network design:
+
+| Use Case | CIDR Application |
+|----------|------------------|
+| **VPC Creation** | Define the IP address range for your entire VPC |
+| **Subnet Design** | Carve out smaller ranges from VPC CIDR |
+| **Security Groups** | Specify allowed IP ranges for traffic |
+| **Route Tables** | Define traffic destinations |
+| **VPC Peering** | Ensure non-overlapping address spaces |
+
+---
+
+### CIDR Notation Explained
+
+**The Slash Number (/X)** indicates how many bits are used for the network portion:
+
+```
+10.0.0.0/16
+         └─ 16 bits for network, remaining 16 bits for hosts
+         
+IPv4 Address = 32 bits total
+Network bits: 16
+Host bits: 32 - 16 = 16
+Total addresses: 2^16 = 65,536 IPs
+```
+
+**Visual Representation:**
+
+```
+IP Address: 10.0.0.0/16 in binary
+
+10      .  0      .  0      .  0
+00001010   00000000   00000000   00000000
+|----Network (16 bits)---|----Host (16 bits)----|
+         Fixed                  Variable
+```
+
+---
+
+### Common CIDR Blocks for AWS VPC
+
+| CIDR Block | Subnet Mask | Total IPs | Usable IPs* | Typical Use |
+|------------|-------------|-----------|-------------|-------------|
+| `/16` | 255.255.0.0 | 65,536 | 65,531 | **VPC** - Large organizations |
+| `/17` | 255.255.128.0 | 32,768 | 32,763 | VPC - Medium organizations |
+| `/18` | 255.255.192.0 | 16,384 | 16,379 | VPC - Small organizations |
+| `/19` | 255.255.224.0 | 8,192 | 8,187 | Large subnets |
+| `/20` | 255.255.240.0 | 4,096 | 4,091 | Large subnets |
+| `/21` | 255.255.248.0 | 2,048 | 2,043 | Medium subnets |
+| `/22` | 255.255.252.0 | 1,024 | 1,019 | Medium subnets |
+| `/23` | 255.255.254.0 | 512 | 507 | Small subnets |
+| `/24` | 255.255.255.0 | 256 | 251 | **Subnet** - Standard |
+| `/25` | 255.255.255.128 | 128 | 123 | Small subnets |
+| `/26` | 255.255.255.192 | 64 | 59 | Micro subnets |
+| `/27` | 255.255.255.224 | 32 | 27 | Very small subnets |
+| `/28` | 255.255.255.240 | 16 | 11 | Minimal subnets |
+
+**Note:** AWS reserves 5 IPs per subnet (network, router, DNS, reserved, broadcast)
+
+---
+
+### Calculating Available IPs
+
+**Formula:**
+```
+Total IPs = 2^(32 - prefix_length)
+Usable IPs in AWS = Total IPs - 5
+```
+
+**Examples:**
+
+**1. VPC with /16:**
+```
+10.0.0.0/16
+Total: 2^(32-16) = 2^16 = 65,536 IPs
+Range: 10.0.0.0 to 10.0.255.255
+```
+
+**2. Subnet with /24:**
+```
+10.0.1.0/24
+Total: 2^(32-24) = 2^8 = 256 IPs
+AWS reserves: 5 IPs
+Usable: 256 - 5 = 251 IPs
+Range: 10.0.1.0 to 10.0.1.255
+
+Reserved IPs:
+- 10.0.1.0   → Network address
+- 10.0.1.1   → VPC router
+- 10.0.1.2   → DNS server  
+- 10.0.1.3   → Reserved (future use)
+- 10.0.1.255 → Broadcast address
+```
+
+**3. Subnet with /28 (small):**
+```
+10.0.1.0/28
+Total: 2^(32-28) = 2^4 = 16 IPs
+AWS reserves: 5 IPs
+Usable: 16 - 5 = 11 IPs
+Range: 10.0.1.0 to 10.0.1.15
+```
+
+---
+
+### AWS VPC CIDR Restrictions
+
+**VPC CIDR Block Rules:**
+
+| Rule | Details |
+|------|---------|
+| **Minimum size** | `/28` (16 IP addresses) |
+| **Maximum size** | `/16` (65,536 IP addresses) |
+| **Cannot change** | Once created, VPC CIDR cannot be modified |
+| **Can add secondary** | Up to 5 CIDR blocks per VPC |
+| **Must not overlap** | With peered VPCs or on-premises networks |
+
+**Allowed Private IP Ranges** (RFC 1918):
+
+```
+10.0.0.0/8        → 10.0.0.0 to 10.255.255.255 (16,777,216 IPs)
+172.16.0.0/12     → 172.16.0.0 to 172.31.255.255 (1,048,576 IPs)  
+192.168.0.0/16    → 192.168.0.0 to 192.168.255.255 (65,536 IPs)
+```
+
+**Recommendation:** Use `10.x.x.x` for maximum flexibility
+
+---
+
+### CIDR Planning Best Practices
+
+#### 1. **Choose Appropriate VPC Size**
+
+```
+Small Organization (< 500 resources)
+VPC: 10.0.0.0/20 (4,096 IPs)
+
+Medium Organization (500-5000 resources)  
+VPC: 10.0.0.0/16 (65,536 IPs) ← Recommended
+
+Large Organization (> 5000 resources)
+VPC: 10.0.0.0/12 (1,048,576 IPs)
+```
+
+#### 2. **Subnet Allocation Strategy**
+
+**Example VPC: 10.0.0.0/16**
+
+```
+Public Tier (Web Servers):
+- 10.0.1.0/24   (AZ-A) - 251 usable IPs
+- 10.0.2.0/24   (AZ-B) - 251 usable IPs
+- 10.0.3.0/24   (AZ-C) - 251 usable IPs
+
+Application Tier (Private):
+- 10.0.11.0/24  (AZ-A) - 251 usable IPs
+- 10.0.12.0/24  (AZ-B) - 251 usable IPs
+- 10.0.13.0/24  (AZ-C) - 251 usable IPs
+
+Database Tier (Private):
+- 10.0.21.0/24  (AZ-A) - 251 usable IPs
+- 10.0.22.0/24  (AZ-B) - 251 usable IPs
+- 10.0.23.0/24  (AZ-C) - 251 usable IPs
+
+Reserved for Growth:
+- 10.0.100.0/22 (1,019 IPs)
+- 10.0.200.0/22 (1,019 IPs)
+```
+
+#### 3. **Multi-Environment Strategy**
+
+**Separate VPCs per environment:**
+
+```
+Development:   10.1.0.0/16
+Staging:       10.2.0.0/16
+Production:    10.0.0.0/16
+DR/Backup:     10.3.0.0/16
+```
+
+**Benefits:**
+- No IP conflicts
+- Clear separation
+- Independent scaling
+- Easy VPC peering
+
+---
+
+### CIDR Subnetting Examples
+
+#### Example 1: Creating 4 Equal Subnets
+
+**Given:** VPC `10.0.0.0/16`  
+**Goal:** Create 4 subnets of equal size
+
+**Solution:** Use `/18` (4 subnets of 16,384 IPs each)
+
+```
+Subnet 1: 10.0.0.0/18    → 10.0.0.0   to 10.0.63.255
+Subnet 2: 10.0.64.0/18   → 10.0.64.0  to 10.0.127.255
+Subnet 3: 10.0.128.0/18  → 10.0.128.0 to 10.0.191.255
+Subnet 4: 10.0.192.0/18  → 10.0.192.0 to 10.0.255.255
+```
+
+#### Example 2: Variable-Sized Subnets (VLSM)
+
+**Given:** VPC `10.0.0.0/16`  
+**Requirements:**
+- 1 subnet for 1000 hosts
+- 2 subnets for 200 hosts each
+- 4 subnets for 50 hosts each
+
+**Solution:**
+
+```
+Large subnet (1000 hosts): 10.0.0.0/22
+- Provides 1,024 IPs (1,019 usable)
+- Range: 10.0.0.0 to 10.0.3.255
+
+Medium subnet 1 (200 hosts): 10.0.4.0/24
+- Provides 256 IPs (251 usable)
+- Range: 10.0.4.0 to 10.0.4.255
+
+Medium subnet 2 (200 hosts): 10.0.5.0/24
+- Provides 256 IPs (251 usable)
+- Range: 10.0.5.0 to 10.0.5.255
+
+Small subnet 1 (50 hosts): 10.0.6.0/26
+- Provides 64 IPs (59 usable)
+- Range: 10.0.6.0 to 10.0.6.63
+
+Small subnet 2 (50 hosts): 10.0.6.64/26
+- Provides 64 IPs (59 usable)
+- Range: 10.0.6.64 to 10.0.6.127
+
+Small subnet 3 (50 hosts): 10.0.6.128/26
+- Provides 64 IPs (59 usable)
+- Range: 10.0.6.128 to 10.0.6.191
+
+Small subnet 4 (50 hosts): 10.0.6.192/26
+- Provides 64 IPs (59 usable)
+- Range: 10.0.6.192 to 10.0.6.255
+```
+
+---
+
+### CIDR Calculation Tools & Commands
+
+#### AWS CLI - Calculate CIDR
+
+```bash
+# Get VPC CIDR
+aws ec2 describe-vpcs \
+  --vpc-ids vpc-xxx \
+  --query 'Vpcs[0].CidrBlock'
+
+# List all subnets with CIDR
+aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=vpc-xxx" \
+  --query 'Subnets[*].[SubnetId,CidrBlock,AvailabilityZone]' \
+  --output table
+```
+
+#### Python CIDR Calculator
+
+```python
+import ipaddress
+
+# VPC network
+vpc = ipaddress.ip_network('10.0.0.0/16')
+
+print(f"VPC CIDR: {vpc}")
+print(f"Total addresses: {vpc.num_addresses}")
+print(f"Network: {vpc.network_address}")
+print(f"Broadcast: {vpc.broadcast_address}")
+print(f"Netmask: {vpc.netmask}")
+
+# Create subnets
+subnets = list(vpc.subnets(new_prefix=24))
+for i, subnet in enumerate(subnets[:10], 1):
+    print(f"Subnet {i}: {subnet} ({subnet.num_addresses - 5} usable IPs)")
+
+# Check if IP is in CIDR
+ip = ipaddress.ip_address('10.0.1.50')
+if ip in vpc:
+    print(f"{ip} is in VPC")
+```
+
+#### Online Tools
+
+Useful CIDR calculators:
+- `https://cidr.xyz`
+- `https://www.ipaddressguide.com/cidr`
+- `https://www.subnet-calculator.com/cidr.php`
+
+---
+
+### Common CIDR Mistakes to Avoid
+
+❌ **Mistake 1: Overlapping CIDR Blocks**
+
+```
+VPC 1: 10.0.0.0/16
+VPC 2: 10.0.0.0/20  ← OVERLAPS! Cannot peer
+
+Correct:
+VPC 1: 10.0.0.0/16
+VPC 2: 10.1.0.0/16  ← No overlap
+```
+
+❌ **Mistake 2: Choosing Too Small VPC**
+
+```
+VPC: 10.0.0.0/24 (256 IPs)
+Problem: Cannot create enough subnets for growth
+
+Better:
+VPC: 10.0.0.0/16 (65,536 IPs)
+```
+
+❌ **Mistake 3: Wasting IP Space**
+
+```
+Bad: All subnets /20 (4,096 IPs each) when you only need 100 IPs
+Good: Right-size subnets - use /24 (256 IPs) or /25 (128 IPs)
+```
+
+❌ **Mistake 4: Not Planning for Multi-Region**
+
+```
+All regions use 10.0.0.0/16 ← Cannot connect via VPN/Transit Gateway
+
+Better:
+us-east-1:  10.0.0.0/16
+eu-west-1:  10.1.0.0/16
+ap-south-1: 10.2.0.0/16
+```
+
+---
+
+### CIDR in Security Groups and NACLs
+
+**Security Group Rule Examples:**
+
+```bash
+# Allow HTTP from anywhere
+Source: 0.0.0.0/0 (entire internet)
+
+# Allow SSH from office network
+Source: 203.0.113.0/24 (office subnet)
+
+# Allow MySQL from app subnet
+Source: 10.0.11.0/24 (app tier)
+
+# Allow all from VPC
+Source: 10.0.0.0/16 (entire VPC)
+```
+
+**Best Practice:** Use the **most specific CIDR** possible:
+
+```
+✅ Good:  10.0.11.0/24  (only app subnet)
+⚠️  OK:   10.0.0.0/16   (entire VPC)
+❌ Bad:  0.0.0.0/0     (entire internet - for databases!)
+```
+
+---
+
+### Quick Reference: CIDR Cheat Sheet
+
+**Common VPC Sizes:**
+```
+/16 = 65,536 IPs  → Standard production VPC
+/20 = 4,096 IPs   → Small production VPC
+/24 = 256 IPs     → Dev/test VPC (too small for production)
+```
+
+**Common Subnet Sizes:**
+```
+/24 = 256 IPs (251 usable)  → Standard subnet
+/25 = 128 IPs (123 usable)  → Small subnet
+/26 = 64 IPs  (59 usable)   → Micro subnet
+/27 = 32 IPs  (27 usable)   → Tiny subnet
+/28 = 16 IPs  (11 usable)   → Minimal subnet
+```
+
+**Conversion Table:**
+```
+/8  = Class A = 255.0.0.0       = 16,777,216 IPs
+/16 = Class B = 255.255.0.0     = 65,536 IPs
+/24 = Class C = 255.255.255.0   = 256 IPs
+/32 = Single IP = 255.255.255.255 = 1 IP
+```
+
+**AWS-Specific:**
+```
+VPC CIDR range: /16 to /28
+Subnet CIDR: Must be subset of VPC CIDR
+Reserved per subnet: 5 IPs
+Max subnets per VPC: 200 (can request increase)
+```
+
+---
+
+## �📦 Subnets
 
 ### What is a Subnet?
 
@@ -1527,28 +1949,29 @@ aws ec2 create-route \
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    VPC (10.0.0.0/16)                │
-│                                                      │
-│  ┌─────────────────────┐  ┌─────────────────────┐  │
-│  │  Public Subnet      │  │  Private Subnet     │  │
-│  │  10.0.1.0/24        │  │  10.0.2.0/24        │  │
-│  │                     │  │                     │  │
-│  │  ┌──────────────┐   │  │  ┌──────────────┐  │  │
-│  │  │ ALB/NLB      │   │  │  │ App Server   │  │  │
-│  │  │ (Public IP)  │───┼──┼─▶│ (Private IP) │  │  │
-│  │  └──────────────┘   │  │  └──────────────┘  │  │
-│  │                     │  │         │           │  │
-│  │  ┌──────────────┐   │  │         ▼           │  │
-│  │  │ NAT Gateway  │   │  │  ┌──────────────┐  │  │
-│  │  └──────────────┘   │  │  │ RDS          │  │  │
-│  │         │           │  │  │ (Private IP) │  │  │
-│  └─────────┼───────────┘  │  └──────────────┘  │  │
-│            │              │         ▲           │  │
-│            │              └─────────┼───────────┘  │
-│            │                        │              │
-│      ┌─────▼──────┐           ┌────┴──────┐       │
-│      │  Internet  │           │  Private  │       │
-│      │  Gateway   │           │  Route    │       │
-│      └────────────┘           │  Table    │       │
+│                                                     │
+│  ┌─────────────────────┐  ┌─────────────────────┐   │
+│  │  Public Subnet      │  │  Private Subnet     │   │
+│  │  10.0.1.0/24        │  │  10.0.2.0/24        │   │
+│  │                     │  │                     │   │
+│  │  ┌──────────────┐   │  │  ┌──────────────┐   │   │
+│  │  │ ALB/NLB      │   │  │  │ App Server   │   │   │
+│  │  │ (Public IP)  │───┼──┼─▶│ (Private IP) │   │   │
+│  │  └──────────────┘   │  │  └──────────────┘   │   │
+│  │                     │  │         │           │   │
+│  │  ┌──────────────┐   │  │         ▼           │   │
+│  │  │ NAT Gateway  │   │  │  ┌──────────────┐   │   │
+│  │  └──────────────┘   │  │  │ RDS          │   │   │ 
+│  │         │           │  │  │ (Private IP) │   │   │
+│  └─────────┼───────────┘  │  └──────────────┘   │   │
+│            │              │         ▲           │   │
+│            │              └─────────┼───────────┘   │
+│            │                        │               │
+│      ┌─────▼──────┐            ┌────┴──────┐        │
+│      │  Internet  │            │  Private  │        │
+│      │  Gateway   │            │  Route    │        │
+│      └────────────┘            │  Table    │        │
+│                                └───────────┘        │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -2370,25 +2793,25 @@ aws rds create-db-instance \
 │              Multi-AZ RDS Deployment                     │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│  Availability Zone A            Availability Zone B     │
-│  ┌─────────────────────┐       ┌─────────────────────┐ │
-│  │  Private Subnet A   │       │  Private Subnet B   │ │
-│  │  10.0.21.0/24       │       │  10.0.22.0/24       │ │
-│  │                     │       │                     │ │
-│  │  ┌──────────────┐   │       │  ┌──────────────┐  │ │
-│  │  │ RDS Primary  │   │       │  │ RDS Standby  │  │ │
-│  │  │              │   │       │  │              │  │ │
-│  │  │ Reads  ✓     │───┼───────┼─▶│ Reads  ✗     │  │ │
-│  │  │ Writes ✓     │   │ Sync  │  │ Writes ✗     │  │ │
-│  │  │              │◀──┼───────┼──│              │  │ │
-│  │  │ Active       │   │ Replic│  │ Passive      │  │ │
-│  │  └──────────────┘   │       │  └──────────────┘  │ │
-│  └─────────────────────┘       └─────────────────────┘ │
+│  Availability Zone A            Availability Zone B      │
+│  ┌─────────────────────┐       ┌─────────────────────┐   │
+│  │  Private Subnet A   │       │  Private Subnet B   │   │
+│  │  10.0.21.0/24       │       │  10.0.22.0/24       │   │
+│  │                     │       │                     │   │
+│  │  ┌──────────────┐   │       │  ┌──────────────┐   │   │
+│  │  │ RDS Primary  │   │       │  │ RDS Standby  │   │   │
+│  │  │              │   │       │  │              │   │   │
+│  │  │ Reads  ✓     │───┼───────┼─▶│ Reads  ✗     │   │   │
+│  │  │ Writes ✓     │   │ Sync  │  │ Writes ✗     │   │   │
+│  │  │              │◀──┼───────┼──│              │   │   │
+│  │  │ Active       │   │ Replic│  │ Passive      │   │   │
+│  │  └──────────────┘   │       │  └──────────────┘   │   │
+│  └─────────────────────┘       └─────────────────────┘   │
 │                                                          │
-│  Connection Endpoint:                                   │
-│  prod-app-mysql-db.abc123.us-east-1.rds.amazonaws.com  │
+│  Connection Endpoint:                                    │
+│  prod-app-mysql-db.abc123.us-east-1.rds.amazonaws.com    │
 │  ↑                                                       │
-│  └─ AWS automatically points to active instance         │
+│  └─ AWS automatically points to active instance          │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -2671,10 +3094,10 @@ aws cloudwatch put-metric-alarm \
 │  │  Application Code                                    │   │
 │  │  ┌────────────────────────────────────────────────┐  │   │
 │  │  │  Connection Pool (10-20 connections)           │  │   │
-│  │  │  ↓                                              │  │   │
+│  │  │  ↓                                             │  │   │
 │  │  │  SSL/TLS Encryption Layer                      │  │   │
-│  │  │  ↓                                              │  │   │
-│  │  │  DNS Resolution:                                │  │   │
+│  │  │  ↓                                             │  │   │
+│  │  │  DNS Resolution:                               │  │   │
 │  │  │  mydb.abc.us-east-1.rds.amazonaws.com          │  │   │
 │  │  │  → resolves to 10.0.21.50                      │  │   │
 │  │  └────────────────────────────────────────────────┘  │   │
@@ -2689,14 +3112,14 @@ aws cloudwatch put-metric-alarm \
 │  RDS Instance (Private Subnet 10.0.21.0/24)                 │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │  Security Group sg-rds                               │   │
-│  │  Allows: TCP 3306 from sg-app ✓                     │   │
+│  │  Allows: TCP 3306 from sg-app ✓                      │   │
 │  │  ┌────────────────────────────────────────────────┐  │   │
 │  │  │  MySQL Database Server (10.0.21.50:3306)       │  │   │
-│  │  │  ↓                                              │  │   │
-│  │  │  SSL/TLS Verification                           │  │   │
-│  │  │  ↓                                              │  │   │
+│  │  │  ↓                                             │  │   │
+│  │  │  SSL/TLS Verification                          │  │   │
+│  │  │  ↓                                             │  │   │
 │  │  │  Authentication (username/password or IAM)     │  │   │
-│  │  │  ↓                                              │  │   │
+│  │  │  ↓                                             │  │   │
 │  │  │  Connection Established                        │  │   │
 │  │  └────────────────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────┘   │
