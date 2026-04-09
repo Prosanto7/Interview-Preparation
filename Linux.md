@@ -797,3 +797,222 @@ tar, zip, unzip, gzip
 ---
 
 **Remember:** The best way to learn Linux is by using it daily. Set up a Linux VM or use WSL on Windows and practice!
+
+---
+
+## 🎯 Linux Interview Questions — Critical Scenarios
+
+---
+
+### ⚡ Performance & Troubleshooting
+
+**Q1. A production server is running slow. Walk through your diagnostic process.**
+
+**Answer:**
+
+Systematic triage — check each layer in order:
+
+```bash
+# Step 1: What's the overall system state?
+uptime                  # Load average (1m, 5m, 15m) vs CPU count
+                        # Load > CPU cores = CPU bottleneck
+
+# Step 2: CPU breakdown
+top                     # Real-time — look at %us (user), %sy (system), %wa (I/O wait)
+htop                    # Better UI — per-core view
+iostat -x 1 5           # I/O statistics — %util > 80% = disk bottleneck
+mpstat -P ALL 1 5       # Per-CPU usage
+
+# Step 3: Memory
+free -h                 # Check available vs used
+                        # If swap is non-zero → memory pressure
+vmstat 1 5              # si/so (swap in/out) — non-zero = bad
+cat /proc/meminfo | grep -E "MemAvailable|Dirty|Writeback"
+
+# Step 4: Disk I/O
+iostat -x 1             # Look for high %await, %util
+iotop -o                # Which processes are doing the I/O?
+lsof | grep deleted     # Log files deleted but still held open (disk full)
+
+# Step 5: Network
+netstat -tuln           # Open ports
+ss -s                   # Socket summary — many TIME_WAIT = connection exhaustion?
+iftop                   # Network bandwidth by host
+
+# Step 6: Application-level
+ps aux --sort=-%cpu | head  # Top CPU-consuming processes
+strace -p <PID>             # What system calls is the process making?
+lsof -p <PID>               # What files/sockets does the process have open?
+```
+
+**Common causes and indicators:**
+| Symptom | Indicator | Cause |
+|---------|-----------|-------|
+| High load, low CPU% | `%wa` high in top | I/O bottleneck (disk or network) |
+| High CPU, load matches | `%us` high | CPU-bound (algorithm, inefficient code) |
+| OOM kills in dmesg | `dmesg | grep -i oom` | Memory leak or undersized server |
+| Slow response, normal CPU | Many TIME_WAIT sockets | Connection pool exhaustion |
+
+---
+
+**Q2. What is the difference between a process and a thread in Linux?**
+
+**Answer:**
+
+| Aspect | Process | Thread |
+|--------|---------|--------|
+| **Memory space** | Separate (fork creates a copy) | Shared within same process |
+| **Communication** | IPC (pipes, sockets, shared memory) | Direct (shared variables) |
+| **Creation cost** | Heavy (`fork()` copies page tables) | Lightweight (`pthread_create()`) |
+| **Crash isolation** | Process crash doesn't affect others | One thread crash kills all threads in process |
+| **Linux implementation** | `task_struct` with separate `mm_struct` | `task_struct` with shared `mm_struct` (`CLONE_VM`) |
+
+**Linux specificity:** Linux implements threads as lightweight processes — `clone()` syscall with shared resources. `ps aux` shows threads as separate PIDs with same TGID (Thread Group ID).
+
+```bash
+# See threads of a process
+ps -eLf | grep php-fpm  # -L shows threads
+ls /proc/<PID>/task/    # One directory per thread
+
+# PHP-FPM is multi-process (not multi-threaded) — each worker = separate process
+# PHP extensions don't need to be thread-safe (not ZTS build needed)
+# Node.js = single-threaded event loop + worker threads for CPU-bound work
+```
+
+**Why PHP-FPM uses processes not threads:**
+- Thread-unsafe extensions (MySQL, image libs) — separate processes avoid race conditions
+- Crash isolation — one worker crash doesn't kill others
+- Memory leak protection — `pm.max_requests` restart per worker
+
+---
+
+**Q3. Explain Linux file permissions — how do setuid, setgid, and sticky bit work?**
+
+**Answer:**
+
+```bash
+ls -la /etc/shadow
+# -rw-r----- 1 root shadow 1234 Jan 1 00:00 /etc/shadow
+#  ^^^------   rwx for owner (root)
+#     ^^^---   r-- for group (shadow)
+#        ^^^   --- for others
+
+# Numeric notation
+chmod 644 file.txt  # rw-r--r--
+# 6 = rw- (4+2), 4 = r-- (4), 4 = r--
+
+# Special bits (4th digit)
+chmod 4755 /usr/bin/passwd  # setuid (4)
+chmod 2755 /usr/bin/wall    # setgid (2)
+chmod 1777 /tmp             # sticky bit (1)
+```
+
+**Setuid (SUID):** File runs with owner's permissions, not caller's
+```bash
+ls -l /usr/bin/passwd
+# -rwsr-xr-x  (s in owner execute position)
+# When user runs passwd → executes as root (owns /etc/shadow)
+# Without SUID → normal user can't modify /etc/shadow
+```
+
+**Setgid (SGID):**
+- On files: Executes with group's permissions
+- On directories: New files inherit directory's group (useful for shared team directories)
+
+**Sticky bit:**
+- On directories: Only file owner can delete their files, even if directory is world-writable
+- `/tmp` has sticky bit — users can create files but not delete others' files
+
+```bash
+# Find all SUID files (security audit)
+find / -perm -4000 -type f 2>/dev/null
+```
+
+---
+
+**Q4. What are Linux namespaces and cgroups — and how do Docker containers use them?**
+
+**Answer:**
+
+**Namespaces** — isolation of system resources (what a process can see):
+
+| Namespace | Isolates | Docker use |
+|-----------|---------|-----------|
+| **PID** | Process IDs | Container has its own PID 1, can't see host processes |
+| **Network** | Network interfaces, routes | Each container gets its own virtual NIC |
+| **Mount** | Filesystem mount points | Container filesystem is isolated from host |
+| **UTS** | Hostname | Container has its own hostname |
+| **User** | UID/GID mappings | Container root (UID 0) maps to unprivileged host UID |
+| **IPC** | Inter-process communication | Isolated shared memory |
+
+**cgroups (Control Groups)** — resource limits (how much a process can use):
+```bash
+# Docker sets cgroup limits with --memory and --cpus flags
+docker run --memory=512m --cpus=1.5 myapp
+
+# Under the hood:
+cat /sys/fs/cgroup/memory/docker/<container_id>/memory.limit_in_bytes
+# 536870912 (512MB)
+
+# cgroups v2 — unified hierarchy (modern systems)
+# docker run --memory=512m → /sys/fs/cgroup/docker/<id>/memory.max
+```
+
+**Container = namespaces + cgroups + overlay filesystem:**
+```
+Container process → sees:
+  - Own PID namespace (PID 1 = app, not host init)
+  - Own network namespace (eth0 = virtual, not host eth0)
+  - Own mount namespace (/ = container overlay, not host /)
+  - Limited to: 512MB RAM, 1.5 CPUs (cgroup limits)
+```
+
+---
+
+**Q5. How do you troubleshoot "too many open files" errors in production?**
+
+**Answer:**
+
+```bash
+# Check current limits
+ulimit -n               # Soft limit for current shell
+cat /proc/sys/fs/file-max  # System-wide maximum
+
+# Check actual usage
+lsof | wc -l            # Total open file descriptors system-wide
+lsof -p <PID> | wc -l  # For specific process
+ls /proc/<PID>/fd | wc -l  # Faster alternative
+
+# Find which processes have most open files
+lsof 2>/dev/null | awk '{print $2}' | sort | uniq -c | sort -rn | head -20
+```
+
+**Increase limits:**
+```bash
+# Temporary (current session)
+ulimit -n 65535
+
+# Permanent system-wide (/etc/security/limits.conf)
+www-data soft nofile 65535
+www-data hard nofile 65535
+root     soft nofile 65535
+root     hard nofile 65535
+
+# Systemd services (/etc/systemd/system/php-fpm.service.d/override.conf)
+[Service]
+LimitNOFILE=65535
+
+# System-wide kernel limit
+echo "fs.file-max = 2097152" >> /etc/sysctl.conf
+sysctl -p
+```
+
+**Common causes:**
+- **Nginx/PHP-FPM:** Each connection = socket (file descriptor). High traffic + too-low limit = EMFILE error
+- **Log files opened but not closed:** `lsof | grep deleted` shows files deleted from filesystem but still held open by processes (consuming disk space)
+- **Database connections:** Each connection = file descriptor. Connection pool leaks
+
+```bash
+# Find leaked file descriptors (deleted but open)
+lsof 2>/dev/null | grep '(deleted)'
+```

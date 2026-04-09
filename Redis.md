@@ -330,3 +330,264 @@ GET http://localhost:3000/posts
 - Redis Data Types: https://redis.io/docs/latest/develop/data-types/
 - Redis Persistence (RDB/AOF): https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
 
+---
+
+## 🎯 Redis Interview Questions — Critical Scenarios
+
+---
+
+### ⚡ High Traffic & Scaling
+
+**Q1. Redis Sentinel vs Redis Cluster — what's the difference and when do you use each?**
+
+**Answer:**
+
+| Feature | Redis Sentinel | Redis Cluster |
+|---------|---------------|--------------|
+| **Purpose** | High availability (failover) | Horizontal scaling + HA |
+| **Data distribution** | All data on primary (replicas are copies) | Data sharded across 16384 slots |
+| **Max dataset size** | Limited by single node RAM | Sum of all node RAM |
+| **Number of primaries** | 1 primary | 3+ primaries (minimum) |
+| **Failover** | Automatic via Sentinel quorum | Automatic |
+| **Client routing** | Client uses Sentinel to get current primary | Cluster-aware client handles routing |
+| **Complexity** | Moderate | Higher |
+
+**Redis Sentinel architecture:**
+```
+Sentinel 1  Sentinel 2  Sentinel 3
+     \          |          /
+      \         |         /
+       ┌────────────────┐
+       │   Primary      │──► Replica 1
+       └────────────────┘──► Replica 2
+```
+
+**Redis Cluster architecture:**
+```
+Primary A (slots 0-5460)    ──► Replica A
+Primary B (slots 5461-10922) ──► Replica B
+Primary C (slots 10923-16383)──► Replica C
+```
+
+**Choose Sentinel when:** Dataset fits in one node, you want simpler setup, need automatic failover only.  
+**Choose Cluster when:** Dataset exceeds single node memory, need horizontal write scaling, millions of ops/sec.
+
+---
+
+**Q2. How does Redis handle persistence and what are the trade-offs of RDB vs AOF?**
+
+**Answer:**
+
+| Feature | RDB (Snapshot) | AOF (Append Only File) |
+|---------|---------------|----------------------|
+| **How** | Point-in-time snapshot to disk | Logs every write command |
+| **Performance** | Better (snapshot is async fork) | Slightly slower writes (fsync overhead) |
+| **Recovery speed** | Fast (load snapshot) | Slower (replay all commands) |
+| **Data loss on crash** | Up to last snapshot interval (minutes) | Configurable: 0s, 1s, or per-write |
+| **File size** | Compact | Larger (grows over time, compacted by rewrite) |
+| **Use case** | Backups, acceptable data loss | Financial, audit trail, minimal data loss |
+
+**Configuration:**
+```bash
+# RDB — save every 60 seconds if at least 1000 keys changed
+save 60 1000
+
+# AOF — fsync every second (at most 1 second data loss)
+appendonly yes
+appendfsync everysec
+
+# Hybrid (recommended for most): AOF for recovery, RDB for backups
+aof-use-rdb-preamble yes
+```
+
+**AOF rewrite:** When AOF grows too large, Redis rewrites it in background (replaces sequence of commands with minimal equivalent).
+
+**Production recommendation:** Use both — AOF with `everysec` for crash recovery, RDB for backups and fast restarts.
+
+---
+
+**Q3. How do you implement a distributed lock with Redis?**
+
+**Answer:**
+The **Redlock algorithm** provides reliable distributed locking across multiple Redis nodes.
+
+**Simple lock (single node):**
+```php
+// SET with NX (only if not exists) + EX (expiry) is atomic
+$acquired = $redis->set(
+    "lock:resource_name",
+    $uniqueLockId,      // Unique ID to prevent releasing another's lock
+    ['NX', 'EX' => 30]  // Expire after 30 seconds
+);
+
+if (!$acquired) {
+    throw new LockNotAcquiredException();
+}
+
+try {
+    // Critical section
+    doWork();
+} finally {
+    // Release ONLY if we own the lock (Lua ensures atomicity)
+    $script = <<<LUA
+    if redis.call("GET", KEYS[1]) == ARGV[1] then
+        return redis.call("DEL", KEYS[1])
+    else
+        return 0
+    end
+    LUA;
+    $redis->eval($script, ['lock:resource_name', $uniqueLockId], 1);
+}
+```
+
+**Why unique ID matters:** If your process times out, lock expires, another process acquires it, then your process resumes — without unique ID check, you'd release the new owner's lock.
+
+**Laravel implementation:**
+```php
+use Illuminate\Support\Facades\Cache;
+
+$lock = Cache::lock('processing-order-' . $orderId, 10); // 10 second lock
+if ($lock->get()) {
+    try {
+        processOrder($orderId);
+    } finally {
+        $lock->release();
+    }
+}
+// Or with blocking:
+$lock->block(5); // Wait up to 5 seconds to acquire
+```
+
+---
+
+### 🗂️ Data Structures & Use Cases
+
+**Q4. When would you use a Redis Sorted Set vs a regular Set?**
+
+**Answer:**
+Sorted Sets maintain members with a floating-point score, enabling ranked retrieval.
+
+```bash
+# Sorted Set — leaderboard with scores
+ZADD leaderboard 9500 "Alice"
+ZADD leaderboard 8700 "Bob"
+ZADD leaderboard 9800 "Charlie"
+
+# Get top 3 players (highest to lowest score)
+ZREVRANGE leaderboard 0 2 WITHSCORES
+# → Charlie 9800, Alice 9500, Bob 8700
+
+# Get Alice's rank (0-indexed)
+ZREVRANK leaderboard "Alice"  → 1
+
+# Players with score between 9000-10000
+ZRANGEBYSCORE leaderboard 9000 10000
+```
+
+**Use cases for Sorted Set:**
+- Leaderboards (gaming, sales rankings)
+- Rate limiting (timestamp as score, member as request ID)
+- Priority queues (score = priority)
+- Scheduling (score = unix timestamp, pop items due for processing)
+- Session expiry tracking (score = expiry timestamp)
+
+**Rate limiting with Sorted Set:**
+```php
+// Sliding window rate limiter — allows 100 requests per minute
+$key = "rate:user:{$userId}";
+$now = microtime(true);
+$window = 60;
+
+$redis->multi()
+    ->zRemRangeByScore($key, 0, $now - $window)  // Remove old requests
+    ->zAdd($key, $now, $now . rand())             // Add current request
+    ->zCard($key)                                 // Count in window
+    ->expire($key, $window)
+    ->exec();
+```
+
+---
+
+**Q5. What are common Redis anti-patterns that cause performance problems?**
+
+**Answer:**
+
+| Anti-pattern | Problem | Solution |
+|-------------|---------|---------|
+| **KEYS \*** in production | Blocks Redis (single-threaded) for seconds on large keyspaces | Use `SCAN` cursor-based iteration |
+| **Huge values** | Serializing large objects increases network bandwidth + memory | Keep values small, store IDs not full objects |
+| **No expiry on keys** | Memory fills up, eviction kicks in unexpectedly | Always set TTL on cache keys |
+| **N individual GETs** | N network round-trips | Use `MGET`, pipeline, or Lua script |
+| **Storing large lists without size limit** | Unbounded memory growth | Use `LTRIM` to cap list size |
+| **Hot keys** | One key handles all traffic, single-threaded bottleneck | Shard hot keys with prefix + random suffix |
+
+```bash
+# ❌ Bad — blocks server
+KEYS user:*
+
+# ✅ Good — non-blocking cursor scan
+SCAN 0 MATCH user:* COUNT 100
+# Returns cursor + results, repeat until cursor = 0
+
+# ❌ Bad — N round-trips
+for id in user_ids:
+    redis.GET(f"user:{id}")
+
+# ✅ Good — single round-trip
+redis.MGET(*[f"user:{id}" for id in user_ids])
+
+# Pipeline — batch commands, one network round-trip
+pipe = redis.pipeline()
+for id in user_ids:
+    pipe.get(f"user:{id}")
+results = pipe.execute()
+```
+
+---
+
+**Q6. How would you cache database query results in Redis with proper invalidation?**
+
+**Answer:**
+
+**Strategy 1: TTL-based (simplest)**
+```php
+$cacheKey = "products:category:{$categoryId}:page:{$page}";
+$products = Cache::remember($cacheKey, 3600, function () use ($categoryId, $page) {
+    return Product::where('category_id', $categoryId)->paginate(20);
+});
+// Stale data possible for up to 1 hour
+```
+
+**Strategy 2: Event-based invalidation (most accurate)**
+```php
+// Observer invalidates cache when product changes
+class ProductObserver {
+    public function saved(Product $product): void {
+        Cache::forget("products:category:{$product->category_id}:*");
+        Cache::tags(['products', "category:{$product->category_id}"])->flush();
+    }
+}
+
+// Using cache tags (requires Redis driver)
+$products = Cache::tags(['products', "category:{$categoryId}"])
+    ->remember("list-page-{$page}", 3600, fn() => Product::paginate(20));
+```
+
+**Strategy 3: Write-through**
+```php
+// Always write to cache AND DB together
+public function updateProduct(Product $product, array $data): Product {
+    $product->update($data);
+    Cache::put("product:{$product->id}", $product, 3600);  // Update cache
+    return $product;
+}
+```
+
+**Strategy 4: Cache-aside with warming**
+```php
+// Pre-populate cache on deploy for hot data
+php artisan cache:warm --products --categories
+```
+
+**Trade-off summary:** TTL = simple but stale. Event-based = accurate but complex. Write-through = consistent but write overhead. Choose based on how stale data affects your use case.
+

@@ -373,3 +373,315 @@ Would you like examples for **Laravel**, **Node.js (Express)**, or **Python (Fla
 - GraphQL Official — https://graphql.org/
 - gRPC — https://grpc.io/docs/
 - WebSockets (RFC 6455) — https://datatracker.ietf.org/doc/html/rfc6455
+
+---
+
+## 🎯 API Interview Questions — Critical Scenarios
+
+---
+
+### 🏗️ REST Design Principles
+
+**Q1. What makes an API truly RESTful? What are the 6 constraints?**
+
+**Answer:**
+REST (Representational State Transfer) has 6 architectural constraints defined by Roy Fielding:
+
+| Constraint | Description | Violation Example |
+|-----------|-------------|------------------|
+| **Client-Server** | Separate UI from data storage | Server rendering HTML with business logic mixed |
+| **Stateless** | Each request contains all info needed | Server-side sessions between requests |
+| **Cacheable** | Responses must declare if cacheable | No Cache-Control headers |
+| **Uniform Interface** | Consistent resource identification | `/getUser` instead of `/users/{id}` |
+| **Layered System** | Client can't tell if connected to origin or intermediary | CORS issues breaking CDN caching |
+| **Code on Demand** (optional) | Server can send executable code | JS served from API |
+
+**Most violated in practice:** Statelessness (session-based APIs) and Uniform Interface (RPC-style naming like `/createUser`, `/deletePost`).
+
+---
+
+**Q2. What is idempotency and why does it matter in API design?**
+
+**Answer:**
+An operation is **idempotent** if calling it multiple times produces the same result as calling it once.
+
+| Method | Idempotent? | Safe? | Notes |
+|--------|------------|-------|-------|
+| GET | ✅ Yes | ✅ Yes | No side effects |
+| HEAD | ✅ Yes | ✅ Yes | Same as GET, no body |
+| PUT | ✅ Yes | ❌ No | Replaces entire resource |
+| DELETE | ✅ Yes | ❌ No | Deleting twice = same result (already gone) |
+| PATCH | ❌ No* | ❌ No | Depends on operation (add vs set) |
+| POST | ❌ No | ❌ No | Creates new resource each time |
+
+**Why it matters:**
+- Networks are unreliable — clients retry on timeout
+- If POST is not idempotent and the client retries, you create duplicate orders/payments
+- **Idempotency keys** solve this for POST:
+
+```http
+POST /payments HTTP/1.1
+Idempotency-Key: uuid-12345-unique-per-request
+
+{ "amount": 100, "currency": "USD" }
+```
+
+Server stores the key + result. Duplicate request with same key returns the same response without re-processing.
+
+**Real use:** Stripe, Braintree, and all major payment APIs require idempotency keys for payment creation.
+
+---
+
+**Q3. How do you design API versioning, and what are the trade-offs of each approach?**
+
+**Answer:**
+
+| Strategy | Example | Pros | Cons |
+|---------|---------|------|------|
+| **URI versioning** | `/api/v1/users` | Explicit, cacheable, easy to debug | "Dirty" URLs, route proliferation |
+| **Header versioning** | `Accept: application/vnd.api+json;version=1` | Clean URLs, proper REST | Hard to test in browser, can't cache per version |
+| **Query param** | `/api/users?version=1` | Easy to test | Easy to ignore, cache issues |
+| **Content negotiation** | `Accept: application/vnd.company.v1+json` | RFC-compliant | Complex, low adoption |
+
+**Industry practice:** URI versioning is overwhelmingly used (GitHub, Twitter, Stripe use `/v1/`, `/v2/`). It's explicit, CDN-friendly, and easy to communicate to API consumers.
+
+**When to version:** Only version when you're making breaking changes (removing fields, changing types, changing behavior). Adding optional fields is not a breaking change.
+
+---
+
+### ⚖️ Comparison & Trade-offs
+
+**Q4. When would you choose GraphQL over REST, and what are its hidden costs?**
+
+**Answer:**
+
+**Choose GraphQL when:**
+- Client needs precise control over response shape (mobile apps with bandwidth constraints)
+- Multiple clients need different data shapes from same endpoint
+- Rapid frontend iteration without backend changes
+- Complex nested data relationships (social graph, content hierarchy)
+
+**Choose REST when:**
+- Simple CRUD operations
+- Team not familiar with GraphQL
+- Heavy HTTP caching needed (GraphQL POST requests are not cached by default)
+- File upload/download operations
+- Simple public APIs
+
+**Hidden GraphQL costs:**
+
+| Problem | Description | Solution |
+|---------|-------------|---------|
+| **N+1 queries** | Resolving nested fields triggers N DB queries | DataLoader (batching) |
+| **No HTTP caching** | All queries hit server (POST) | Persisted queries, CDN with cache keys |
+| **Query complexity** | Malicious deeply nested query can DoS server | Query depth limiting, cost analysis |
+| **Schema versioning** | No standard versioning | Deprecate fields, schema stitching |
+| **Overfetching at DB level** | Even though client requests few fields, resolver may fetch all | Field-level DB projections |
+
+```javascript
+// DataLoader solves N+1 in GraphQL
+const userLoader = new DataLoader(async (ids) => {
+    const users = await User.findAll({ where: { id: ids } });
+    return ids.map(id => users.find(u => u.id === id));
+});
+
+// Resolver uses loader — batches all user lookups into ONE query
+const resolvers = {
+    Post: {
+        author: (post) => userLoader.load(post.authorId)
+    }
+};
+```
+
+---
+
+**Q5. WebSockets vs Server-Sent Events (SSE) vs Long Polling — when to use each?**
+
+**Answer:**
+
+| Feature | WebSockets | SSE | Long Polling |
+|---------|-----------|-----|-------------|
+| **Direction** | Bidirectional | Server → Client only | Server → Client |
+| **Protocol** | ws:// (separate from HTTP) | HTTP | HTTP |
+| **Browser support** | Universal | Universal (not IE) | Universal |
+| **Reconnect** | Manual | Automatic | Manual |
+| **Overhead** | Low (after handshake) | Low | High (new HTTP request each time) |
+| **Load balancer friendly** | Requires sticky sessions | ✅ Yes | ✅ Yes |
+| **Firewall/proxy friendly** | Sometimes blocked | ✅ Yes | ✅ Yes |
+
+**Choose WebSockets:** Chat, multiplayer gaming, collaborative editing (Google Docs), trading platforms — bidirectional, low-latency required.
+
+**Choose SSE:** Live dashboards, news feeds, notifications, stock tickers — server pushes updates, client doesn't need to send data.
+
+**Choose Long Polling:** Legacy systems, firewall-restricted environments, simple notifications where SSE/WS are blocked.
+
+---
+
+### 🔐 API Security
+
+**Q6. What are the most critical API security vulnerabilities and how do you prevent them?**
+
+**Answer:**
+
+| Vulnerability | Attack | Prevention |
+|--------------|--------|-----------|
+| **Broken Object Level Auth (BOLA/IDOR)** | `GET /orders/12345` where 12345 belongs to another user | Always validate resource ownership, not just authentication |
+| **Mass Assignment** | POST with `{"role": "admin"}` injected into user update | Whitelist allowed fields, never bind request body directly to model |
+| **Excessive Data Exposure** | API returns full user object including SSN, password hash | Explicit response serializers, never serialize full model |
+| **Rate Limiting Missing** | Brute-force login, credential stuffing | Per-IP and per-user rate limiting |
+| **Security Misconfiguration** | CORS allows `*`, debug endpoints in production | Strict CORS, remove debug routes |
+| **Injection** | SQL/NoSQL/command injection via API params | Parameterized queries, input validation |
+
+**BOLA is #1 in OWASP API Security Top 10** — it's the most common and most impactful:
+
+```php
+// ❌ Vulnerable — only checks authentication, not authorization
+$order = Order::find($request->id);
+return $order;
+
+// ✅ Secure — validates ownership
+$order = Order::where('id', $request->id)
+              ->where('user_id', auth()->id())  // Ownership check
+              ->firstOrFail();
+return $order;
+```
+
+---
+
+**Q7. How would you implement API rate limiting at scale?**
+
+**Answer:**
+Different rate limiting algorithms suit different scenarios:
+
+**Token Bucket (most flexible):**
+- Tokens added at rate R, bucket holds max B tokens
+- Request consumes 1 token, rejected if bucket empty
+- Allows bursting up to B requests
+
+**Fixed Window Counter:**
+- Count requests per window (e.g., 100/minute)
+- Reset counter at window boundary
+- **Problem:** 200 requests possible at window boundary (99 at end of window 1 + 101 at start of window 2)
+
+**Sliding Window Log (most accurate, most memory):**
+- Store timestamp of each request
+- Count requests in past 60 seconds
+- **Problem:** O(requests) memory per user
+
+**Sliding Window Counter (best balance):**
+```
+current_window_count + prev_window_count * (1 - elapsed/window_size)
+```
+
+**Redis-based implementation:**
+
+```lua
+-- Lua script for atomic token bucket in Redis
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(bucket[1]) or capacity
+local last_refill = tonumber(bucket[2]) or now
+
+-- Refill tokens based on elapsed time
+local elapsed = now - last_refill
+local new_tokens = math.min(capacity, tokens + elapsed * refill_rate)
+
+if new_tokens >= 1 then
+    redis.call('HMSET', key, 'tokens', new_tokens - 1, 'last_refill', now)
+    return 1  -- Allowed
+else
+    return 0  -- Rate limited
+end
+```
+
+**Distributed rate limiting:** Use Redis with Lua scripts for atomicity. A single Redis INCR + EXPIRE is NOT atomic — use Lua or Redis modules (redis-cell).
+
+---
+
+### 🆕 Modern API Concepts
+
+**Q8. What is an API Gateway and what problems does it solve?**
+
+**Answer:**
+An API Gateway is a single entry point for all clients, handling cross-cutting concerns:
+
+```
+Clients → API Gateway → Microservices
+          (auth, rate limit,
+           routing, transform,
+           logging, caching)
+```
+
+**Problems it solves:**
+
+| Problem | Without Gateway | With Gateway |
+|---------|----------------|-------------|
+| Authentication | Every service implements auth | Centralized, single point |
+| Rate limiting | Per service configuration | Unified policy |
+| SSL termination | Each service handles TLS | Gateway handles, services use HTTP internally |
+| Request routing | Clients know all service URLs | Single endpoint, gateway routes |
+| API composition | Client makes N calls | Gateway aggregates (Backend for Frontend pattern) |
+| Observability | Distributed logging | Centralized access logs |
+
+**Popular API Gateways:** AWS API Gateway, Kong, Nginx, Traefik, Envoy.
+
+**Backend for Frontend (BFF) pattern:** Different API Gateway instances per client type (mobile BFF, web BFF) — each optimizes response for its client's needs.
+
+---
+
+**Q9. What is the difference between synchronous and asynchronous API patterns?**
+
+**Answer:**
+
+**Synchronous (request-response):** Client waits for response.
+
+```
+Client → POST /process → Server (processes) → Response (done/failed)
+```
+
+**Asynchronous (job queue):** Client submits job, polls or gets callback.
+
+```
+Client → POST /jobs → Server (queues) → 202 Accepted + job_id
+Client → GET /jobs/{id} → pending/processing/done
+     OR
+Server → POST client_callback_url → done (webhook)
+```
+
+**When to use async APIs:**
+- Processing takes >5 seconds (file conversion, ML inference, bulk operations)
+- Processing is unreliable (may need retries)
+- Long-running workflows
+
+**Webhook design best practices:**
+```http
+POST /your-callback-url HTTP/1.1
+X-Webhook-Signature: sha256=abc123  # HMAC signature for verification
+Content-Type: application/json
+
+{ "event": "payment.completed", "data": {...} }
+```
+
+Always verify webhook signatures to prevent spoofed events.
+
+---
+
+**Q10. What HTTP status codes are commonly misused and what's correct?**
+
+**Answer:**
+
+| Misuse | Wrong Code | Correct Code | Reason |
+|--------|-----------|-------------|--------|
+| Validation error | 500 | 422 Unprocessable Entity | Client sent invalid data, not server error |
+| Unauthorized (not logged in) | 403 | 401 Unauthorized | Not authenticated at all |
+| Forbidden (logged in, no permission) | 401 | 403 Forbidden | Authenticated but not authorized |
+| Resource not found | 200 with `{"error": "not found"}` | 404 Not Found | Never put errors in 200 response |
+| Empty collection | 404 | 200 with `[]` | Empty list is a valid response |
+| Business rule violation | 500 | 409 Conflict or 422 | "Out of stock" is not a server error |
+| Rate limited | 403 | 429 Too Many Requests | Distinct semantic meaning |
+
+**Key rule:** 4xx = client error (fix your request), 5xx = server error (try again later). Mixing these breaks retry logic and monitoring alerts.

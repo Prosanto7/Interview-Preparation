@@ -105,8 +105,8 @@ Think of an IP address as a device's "home address" on a network:
 
 **Binary Representation:**
 ```
-Decimal: 192      . 168      . 1        . 100
-Binary:  11000000 . 10101000 . 00000001 . 01100100
+Decimal: 192       . 168       . 1         . 100
+Binary:  11000000  . 10101000  . 00000001  . 01100100
          └─ 8 bits─┘ └─ 8 bits─┘ └─ 8 bits─┘ └─ 8 bits─┘
                     Total: 32 bits
 ```

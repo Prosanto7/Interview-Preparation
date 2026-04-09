@@ -244,3 +244,272 @@ If you're building a modern web app, REST API, or microservices system, **Docker
 - Dockerfile reference: https://docs.docker.com/reference/dockerfile/
 - Docker Compose: https://docs.docker.com/compose/
 - Best practices for writing Dockerfiles: https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+
+---
+
+## 🎯 Docker Interview Questions — Critical Scenarios
+
+---
+
+### 🏗️ Images & Builds
+
+**Q1. What is a multi-stage build and why should you use it in production?**
+
+**Answer:**
+Multi-stage builds use multiple `FROM` statements in one Dockerfile, allowing you to build in one stage and copy only artifacts to a lean final image.
+
+```dockerfile
+# ❌ Single-stage — final image includes compiler, dev deps, source
+FROM node:18
+WORKDIR /app
+COPY package*.json ./
+RUN npm install    # Includes devDependencies
+COPY . .
+RUN npm run build
+CMD ["node", "dist/server.js"]
+# Image size: ~900MB
+
+# ✅ Multi-stage — final image only contains runtime artifacts
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine AS runtime
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+# Only production dependencies copied
+CMD ["node", "dist/server.js"]
+# Image size: ~150MB
+```
+
+**Benefits:**
+- Smaller image = faster pulls, less attack surface, lower storage costs
+- Build tools (compilers, test frameworks) don't end up in production image
+- Separate caching per stage — source changes don't invalidate dependency layer
+
+**PHP example:**
+```dockerfile
+FROM composer:2 AS vendor
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader
+
+FROM php:8.3-fpm-alpine AS production
+COPY --from=vendor /app/vendor /var/www/vendor
+COPY . /var/www
+```
+
+---
+
+**Q2. How do Docker layer caching work and how do you optimize Dockerfiles for it?**
+
+**Answer:**
+Each instruction in a Dockerfile creates an immutable layer. Docker caches layers and only rebuilds from the point where something changed.
+
+```dockerfile
+# ❌ Bad — COPY . . invalidates cache before npm install
+FROM node:18-alpine
+WORKDIR /app
+COPY . .               # Changes every time any file changes
+RUN npm install        # Reinstalls every time — slow!
+CMD ["node", "index.js"]
+
+# ✅ Good — copy package files first (rarely change)
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./  # Only reinstalls when deps change
+RUN npm install        # Cached unless package.json changed
+COPY . .               # Application code changes don't affect install
+CMD ["node", "index.js"]
+```
+
+**Key rules:**
+1. Put instructions that change least at the top
+2. Copy dependency manifests before copying source
+3. `RUN apt-get update && apt-get install` in one layer (avoids stale cache)
+4. Use `--no-cache` in CI to ensure clean builds
+
+---
+
+### 🔐 Security
+
+**Q3. What are the most important Docker security best practices?**
+
+**Answer:**
+
+| Practice | Why | How |
+|---------|-----|-----|
+| **Don't run as root** | Root in container = near-root on host | `USER appuser` in Dockerfile |
+| **Use minimal base images** | Fewer packages = smaller attack surface | Alpine, distroless, scratch |
+| **Don't embed secrets** | Image layers are inspectable | Use env vars, Docker secrets, Vault |
+| **Scan images** | Known CVEs in base images | `docker scout`, Trivy, Snyk |
+| **Read-only filesystem** | Prevents runtime modification | `--read-only` flag |
+| **Limit capabilities** | Drop unnecessary Linux capabilities | `--cap-drop ALL --cap-add NET_BIND_SERVICE` |
+| **Don't use `latest` tag** | Unpredictable builds | Pin to specific versions `node:18.19.0-alpine3.19` |
+
+```dockerfile
+# Security-hardened Dockerfile
+FROM php:8.3-fpm-alpine
+
+# Create non-root user
+RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
+
+WORKDIR /var/www
+
+# Install deps as root (needed)
+RUN apk add --no-cache libpng-dev && docker-php-ext-install pdo_mysql
+
+COPY --chown=appuser:appgroup . .
+
+# Drop to non-root
+USER appuser
+
+EXPOSE 9000
+CMD ["php-fpm"]
+```
+
+**Secrets — never do this:**
+```dockerfile
+# ❌ Secret baked into image layer (visible with docker history)
+ENV DB_PASSWORD=secret123
+RUN curl -H "Auth: $DB_PASSWORD" https://api.example.com
+```
+
+**Use runtime secrets instead:**
+```bash
+docker run -e DB_PASSWORD=$(cat /run/secrets/db_pass) myapp
+# Or Docker Swarm secrets
+docker secret create db_password ./password.txt
+```
+
+---
+
+**Q4. What is the difference between Docker Volumes, Bind Mounts, and tmpfs?**
+
+**Answer:**
+
+| Type | Storage Location | Use Case | Managed by |
+|------|-----------------|---------|-----------|
+| **Volume** | Docker-managed directory (`/var/lib/docker/volumes/`) | DB data, persistent app data | Docker |
+| **Bind Mount** | Any host path | Development (hot reload), config files | Host OS |
+| **tmpfs** | Host RAM (not persisted) | Secrets, temp sensitive data | Docker + RAM |
+
+```bash
+# Named Volume — Docker manages location, survives container deletion
+docker run -v myapp-data:/var/www/storage myapp
+
+# Bind Mount — direct host path (development)
+docker run -v $(pwd)/src:/var/www/src myapp
+# Code changes immediately reflected in container
+
+# tmpfs — in-memory, never written to disk
+docker run --tmpfs /run/secrets:rw,noexec,nosuid,size=64m myapp
+```
+
+**Best practices:**
+- Use **volumes** for production data persistence
+- Use **bind mounts** for local development only
+- Use **tmpfs** for sensitive data that must not touch disk (session tokens, temp credentials)
+- Never use bind mounts in production (host path dependency)
+
+---
+
+### ⚡ Networking & Performance
+
+**Q5. Explain Docker networking modes and when to use each.**
+
+**Answer:**
+
+| Network Mode | Description | Use Case |
+|-------------|-------------|---------|
+| **bridge** (default) | Private network, containers communicate via container name | Multi-container apps on single host |
+| **host** | Container uses host's network stack directly | Maximum performance, no NAT overhead |
+| **none** | No network access | Security-isolated batch jobs |
+| **overlay** | Multi-host networking (Docker Swarm/Kubernetes) | Distributed services across hosts |
+| **macvlan** | Container gets its own MAC/IP on physical network | Legacy apps needing direct network access |
+
+```yaml
+# docker-compose.yml — custom bridge network
+services:
+  app:
+    networks:
+      - backend
+      - frontend
+  db:
+    networks:
+      - backend    # Only app can reach DB, not public internet
+
+networks:
+  frontend:
+  backend:
+    internal: true  # No external access
+```
+
+**Container DNS:** On custom bridge networks, containers communicate by service name (`db`, `redis`) — Docker's embedded DNS resolves them.
+
+---
+
+**Q6. Docker vs Docker Compose vs Docker Swarm vs Kubernetes — when to use each?**
+
+**Answer:**
+
+| Tool | Use Case | Scale | Complexity |
+|------|---------|-------|-----------|
+| **Docker** | Single container, local dev | 1 container | Low |
+| **Docker Compose** | Multi-container local dev, simple production | Multiple containers, 1 host | Low |
+| **Docker Swarm** | Simple container orchestration, multi-host | Multiple hosts | Medium |
+| **Kubernetes** | Complex orchestration, auto-scaling, self-healing | Enterprise, 10+ services | High |
+
+**Decision guide:**
+- **Local development:** Docker Compose
+- **Small team, simple deployment (2-3 services):** Docker Compose on a single server
+- **Medium complexity, prefer simplicity:** Docker Swarm
+- **Large scale, complex requirements, cloud-native:** Kubernetes
+
+**Kubernetes advantages over Swarm:**
+- Auto-scaling (HPA, VPA, Cluster Autoscaler)
+- Rich ecosystem (Helm, Prometheus, Istio)
+- More granular networking policies
+- Better support by all major clouds (EKS, GKE, AKS)
+
+---
+
+**Q7. What are the key differences between `CMD` and `ENTRYPOINT` in Dockerfile?**
+
+**Answer:**
+
+| Feature | CMD | ENTRYPOINT |
+|---------|-----|-----------|
+| **Purpose** | Default command (can be overridden) | Fixed executable (harder to override) |
+| **Override** | `docker run myimage custom-command` replaces CMD | `docker run --entrypoint newcmd myimage` |
+| **Combined** | ENTRYPOINT sets binary, CMD provides default args | — |
+
+```dockerfile
+# CMD — easily overridden
+CMD ["php", "artisan", "serve"]
+# docker run myapp php artisan migrate  → runs migrate, not serve
+
+# ENTRYPOINT — fixed binary
+ENTRYPOINT ["php"]
+CMD ["artisan", "serve"]
+# docker run myapp artisan migrate  → runs php artisan migrate
+# docker run myapp -v  → runs php -v
+
+# Best practice for production: ENTRYPOINT + CMD
+ENTRYPOINT ["/docker-entrypoint.sh"]  # Setup script
+CMD ["php-fpm"]                        # Default process
+```
+
+**Shell vs Exec form:**
+```dockerfile
+# Shell form — runs as /bin/sh -c (PID is NOT 1, signals not forwarded)
+CMD php artisan serve
+
+# Exec form — process IS PID 1, receives signals properly
+CMD ["php", "artisan", "serve"]
+```
+
+Always use exec form (`["executable", "arg1"]`) in production — it ensures your process receives SIGTERM for graceful shutdown.

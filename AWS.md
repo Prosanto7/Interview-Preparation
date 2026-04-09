@@ -6525,3 +6525,288 @@ Elastic IPs are **not directly attached** to Load Balancers — AWS manages thei
 ```
 
 ---
+
+## 🎯 AWS Interview Questions — Critical Scenarios
+
+---
+
+### 🏗️ Architecture & High Availability
+
+**Q1. How do you design a highly available 3-tier web application on AWS?**
+
+**Answer:**
+
+```
+                            Route 53 (DNS + Health Checks)
+                                       │
+                              CloudFront (CDN)
+                                       │
+                         ┌─── ALB (Load Balancer) ───┐
+                         │         Multi-AZ           │
+                    AZ-1 (us-east-1a)           AZ-2 (us-east-1b)
+                  ┌──────────────┐           ┌──────────────┐
+                  │  EC2 Web     │           │  EC2 Web     │  ← Auto Scaling Group
+                  │  (t3.medium) │           │  (t3.medium) │
+                  └──────────────┘           └──────────────┘
+                         │                         │
+                  ┌──────────────┐           ┌──────────────┐
+                  │  EC2 App     │           │  EC2 App     │  ← Private Subnet
+                  └──────────────┘           └──────────────┘
+                         │                         │
+                  ┌──────────────┐           ┌──────────────┐
+                  │ RDS Primary  │           │ RDS Standby  │  ← Multi-AZ RDS
+                  └──────────────┘           └──────────────┘
+                              ElastiCache (Redis) Multi-AZ
+```
+
+**Key HA components:**
+| Component | HA Mechanism | RPO/RTO |
+|-----------|-------------|---------|
+| **EC2** | Auto Scaling Group across 2+ AZs | < 5 min (new instance) |
+| **RDS** | Multi-AZ (synchronous standby) | < 2 min failover |
+| **ElastiCache** | Redis Cluster Mode or Replication Group | < 30 sec |
+| **ALB** | Managed by AWS across AZs | ~0 (AWS-managed) |
+| **S3** | 99.999999999% durability (11 9s), 99.99% availability | N/A |
+
+**Route 53 health checks:**
+```
+Health check → ALB endpoint every 30 sec
+If 3 consecutive failures → remove from DNS
+Failover routing: primary region → secondary region (disaster recovery)
+```
+
+---
+
+**Q2. What is the difference between EC2 instance types and when would you choose each?**
+
+**Answer:**
+
+| Family | Type | vCPU:RAM Ratio | Use Case | Example |
+|--------|------|---------------|---------|---------|
+| **General Purpose** | t3/t4g | 1:4 | Burstable web servers, dev | t3.medium (2 vCPU, 4 GB) |
+| **General Purpose** | m6i/m7g | 1:4 | Production web/app servers | m6i.xlarge (4 vCPU, 16 GB) |
+| **Compute Optimized** | c6i/c7g | 1:2 | CPU-heavy: encoding, HPC | c6i.2xlarge (8 vCPU, 16 GB) |
+| **Memory Optimized** | r6i/x2idn | 1:8 or more | In-memory DB, large datasets | r6i.2xlarge (8 vCPU, 64 GB) |
+| **Storage Optimized** | i3/i4i | SSD-intensive | NoSQL, data warehousing | i3.2xlarge (8 vCPU, 61 GB, 1.9TB NVMe) |
+| **GPU** | p3/g4dn | GPU-heavy | ML training/inference | g4dn.xlarge (4 vCPU, 1 GPU) |
+
+**T3 burstable instances — important nuance:**
+```
+T3 accumulates CPU credits when usage < baseline
+Runs at full speed when spending credits
+
+Baseline performance (t3.medium 2 vCPU):
+  20% of 2 vCPU = 0.4 vCPU continuously
+  Burst to 2 vCPU using earned credits
+
+T3 Unlimited mode: Burst indefinitely, pay per extra CPU credit
+  Good for: Variable workloads
+  Risk: Unexpected cost spike during sustained high CPU
+
+When to use M-family instead of T3: Sustained CPU > baseline
+```
+
+**Graviton (ARM) instances (g suffix: m7g, c7g):**
+- 20-40% better price/performance than x86 equivalents
+- Good for: Linux workloads, containers, PHP, Java
+- Not compatible with: Windows Server, some compiled binaries
+
+---
+
+**Q3. Explain S3 storage classes and lifecycle policies for cost optimization.**
+
+**Answer:**
+
+| Storage Class | Availability | Retrieval | Cost | Use Case |
+|--------------|-------------|----------|------|---------|
+| **S3 Standard** | 99.99% | Instant | $$$ | Frequently accessed data |
+| **S3 Intelligent-Tiering** | 99.9% | Instant | $$ + monitoring | Unknown/changing access patterns |
+| **S3 Standard-IA** | 99.9% | Instant | $$ + retrieval fee | Infrequent access, kept long-term |
+| **S3 One Zone-IA** | 99.5% (one AZ) | Instant | $ + retrieval fee | Reproducible data, cost-sensitive |
+| **S3 Glacier Instant Retrieval** | 99.9% | Instant | $ | Quarterly access |
+| **S3 Glacier Flexible Retrieval** | 99.99% | 1-12 hours | Very cheap | Archive, annual access |
+| **S3 Glacier Deep Archive** | 99.99% | 12-48 hours | Cheapest | Compliance archive, 7+ year retention |
+
+**Lifecycle policy example (logs):**
+```json
+{
+  "Rules": [{
+    "ID": "LogLifecycle",
+    "Status": "Enabled",
+    "Filter": {"Prefix": "logs/"},
+    "Transitions": [
+      {"Days": 30, "StorageClass": "STANDARD_IA"},
+      {"Days": 90, "StorageClass": "GLACIER_IR"},
+      {"Days": 365, "StorageClass": "DEEP_ARCHIVE"}
+    ],
+    "Expiration": {"Days": 2555}
+  }]
+}
+```
+
+**S3 cost optimization checklist:**
+- Enable Intelligent-Tiering for data > 128KB with unknown access patterns
+- Enable S3 Inventory to audit storage class usage
+- S3 Replication: replicate to cheaper region for DR (Standard-IA in secondary)
+- Request Pays: customer pays retrieval costs for public datasets
+- Enable Requester Pays for cross-region transfer cost control
+
+---
+
+**Q4. When would you use SQS vs SNS vs EventBridge?**
+
+**Answer:**
+
+| Service | Type | Pattern | Retention | Use Case |
+|---------|------|---------|----------|---------|
+| **SQS** | Message Queue | Pull (consumers poll) | 14 days | Work queue, decoupling, exactly-once processing |
+| **SNS** | Pub/Sub | Push (instant fan-out) | No persistence | Broadcast to multiple subscribers simultaneously |
+| **EventBridge** | Event Bus | Rule-based routing | Archive option | Complex routing rules, AWS service events, SaaS integration |
+
+**SQS types:**
+- **Standard:** At-least-once delivery, best-effort ordering, unlimited throughput
+- **FIFO:** Exactly-once, ordered, limited to 3,000 msg/sec (with batching)
+
+**When to use each:**
+```
+Order placed → fan out to multiple systems:
+  Use SNS (pub/sub):
+    SNS Topic "order-events"
+      → SQS Queue (EmailService consumer)
+      → SQS Queue (InventoryService consumer)
+      → SQS Queue (AnalyticsService consumer)
+
+Background job processing:
+  Use SQS directly:
+    App → SQS → ECS Workers (auto-scale based on queue depth)
+
+AWS service events (EC2 state change, S3 uploads):
+  Use EventBridge:
+    S3 PutObject → EventBridge rule → Lambda (process image)
+    EC2 state → EventBridge → SNS → Alert team
+
+Scheduled events:
+  Use EventBridge Scheduler:
+    cron(0 2 * * ? *) → Lambda (nightly report)
+```
+
+**Dead Letter Queue pattern:**
+```
+SQS Queue (3 retries) → DLQ if all retries fail
+                      → CloudWatch alarm on DLQ depth
+                      → Alert team → manual investigation
+```
+
+---
+
+**Q5. How do you optimize AWS costs for a production workload?**
+
+**Answer:**
+
+**Compute (EC2/ECS):**
+```
+On-Demand: Pay per second, no commitment — use for spiky/unpredictable
+Reserved Instances (1-3 year): 30-60% discount — use for steady baseline load
+Savings Plans: More flexible than RI (any instance family) — 20-50% discount
+Spot Instances: 70-90% discount, can be interrupted — use for fault-tolerant batch jobs
+
+Strategy: Reserved/Savings Plans for baseline + Spot for burst
+  Auto Scaling: min=2 (RI), desired=4 (On-Demand), max=10 (Spot)
+```
+
+**Database (RDS):**
+```
+Multi-AZ costs 2× — disable for dev/staging
+Stop RDS during off-hours (dev environments):
+  EventBridge → Lambda → RDS stop (weekdays 6pm → start 8am)
+Right-size: Use CloudWatch to check CPU/connection utilization
+  If avg CPU < 20% → downsize instance
+Aurora Serverless v2: Auto-scales to 0 ACU in dev (stops billing when idle)
+```
+
+**Storage (S3):**
+```
+S3 Lifecycle policies (as above)
+S3 Intelligent-Tiering for unknown patterns
+Delete incomplete multipart uploads:
+  aws s3api list-multipart-uploads → delete stale ones (accumulate silently)
+```
+
+**Data Transfer (often overlooked):**
+```
+Intra-region between AZs: $0.01/GB (each way) — use for unavoidable HA
+Same-AZ: Free — keep tightly coupled services in same AZ
+NAT Gateway: $0.045/GB — minimize outbound to internet through NAT
+  Use VPC Endpoints for S3/DynamoDB — free, bypasses NAT Gateway
+  Can save $500+/month for data-heavy workloads
+CloudFront: Cheaper egress than direct S3/EC2 ($0.0085 vs $0.09/GB in US)
+```
+
+**Monitoring cost:**
+```bash
+# AWS Cost Explorer + Cost Anomaly Detection
+# Set budget alerts at 80% and 100% of monthly budget
+# Tag all resources: Environment, Team, Project
+# Use AWS Trusted Advisor for right-sizing recommendations
+```
+
+---
+
+**Q6. Explain IAM roles vs users vs policies — and what is the principle of least privilege?**
+
+**Answer:**
+
+| IAM Entity | What It Is | Authentication | Use For |
+|-----------|-----------|---------------|---------|
+| **User** | Person or service with long-term credentials | Access key/secret or password | Human operators, legacy integrations |
+| **Role** | Temporary credentials assumed by identity | STS AssumeRole (session tokens) | EC2, Lambda, cross-account access |
+| **Group** | Collection of users sharing policies | Inherits from users | Organizing permissions for teams |
+| **Policy** | JSON document defining permissions | Attached to user/role/group | Granting/denying specific actions |
+
+**Principle of Least Privilege:**
+Give only the minimum permissions needed for the task, and nothing more.
+
+```json
+// ❌ Overly permissive — don't do this
+{
+  "Effect": "Allow",
+  "Action": "*",
+  "Resource": "*"
+}
+
+// ✅ Least privilege — Lambda reading from specific S3 bucket
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject"],
+  "Resource": "arn:aws:s3:::my-bucket/uploads/*",
+  "Condition": {
+    "StringEquals": {
+      "aws:RequestedRegion": "us-east-1"
+    }
+  }
+}
+```
+
+**EC2 role best practices:**
+```
+EC2 instance → Instance Profile → IAM Role → IAM Policy
+(Never embed access keys in EC2 — use instance roles)
+
+App code uses role automatically:
+  $s3 = new S3Client(['region' => 'us-east-1']);
+  // SDK automatically fetches temporary credentials from metadata endpoint
+  // http://169.254.169.254/latest/meta-data/iam/security-credentials/
+```
+
+**Cross-account access pattern:**
+```
+Account A (Production): Lambda role trusts Account B
+Account B (Tools): CI/CD role assumes Account A's deployment role
+  → CI/CD pipeline deploys to Production without long-term credentials
+```
+
+**Security best practices:**
+- Enable MFA for root and all human IAM users
+- Use AWS Organizations SCPs (Service Control Policies) to prevent dangerous actions organization-wide
+- Rotate access keys regularly; audit unused keys with Trusted Advisor
+- Use AWS CloudTrail to log all API calls (who did what, when, from where)

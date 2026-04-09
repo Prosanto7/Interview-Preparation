@@ -1490,3 +1490,638 @@ Split data across multiple databases.
 
 **Remember:** Database design is about trade-offs. There's no one-size-fits-all solution. Understand your requirements and choose accordingly!
 
+---
+
+## 🎯 Database Interview Questions — Critical Scenarios
+
+---
+
+### 🔴 High Traffic & Scaling
+
+**Q1. Your MySQL database is the bottleneck under high traffic. What is your step-by-step approach?**
+
+**Answer:**
+
+**Step 1 — Diagnose:**
+```sql
+-- Find slow queries (enable slow query log)
+SHOW VARIABLES LIKE 'slow_query_log';
+SET GLOBAL slow_query_log = 'ON';
+SET GLOBAL long_query_time = 1;  -- Log queries > 1 second
+
+-- Check running queries
+SHOW PROCESSLIST;
+
+-- Analyze query
+EXPLAIN SELECT * FROM orders WHERE user_id = 5 AND status = 'pending';
+```
+
+**Step 2 — Optimize queries:**
+- Add missing indexes based on EXPLAIN output
+- Rewrite N+1 causing queries with JOINs
+- Avoid `SELECT *` — fetch only needed columns
+- Use covering indexes
+
+**Step 3 — Read/Write splitting:**
+```
+Primary DB (writes) → Replica DB 1, 2, 3 (reads)
+```
+Route 80% of traffic (reads) to replicas. Application connects to replica for SELECTs.
+
+**Step 4 — Caching layer:**
+- Cache frequent, rarely-changing reads in Redis
+- Use query result caching for expensive aggregates
+
+**Step 5 — Vertical then horizontal scaling:**
+- Vertical: More RAM (InnoDB buffer pool), faster disk (SSD/NVMe)
+- Horizontal: Sharding by user_id ranges or consistent hashing
+
+---
+
+**Q2. What is database sharding and what are the trade-offs?**
+
+**Answer:**
+**Sharding** splits data horizontally across multiple database instances (shards). Each shard holds a subset of rows.
+
+**Strategies:**
+| Strategy | How | Pros | Cons |
+|---------|-----|------|------|
+| **Range-based** | Shard by user_id 1-1M → DB1, 1M-2M → DB2 | Simple, range queries efficient | Hotspots if one range is more active |
+| **Hash-based** | `shard = hash(user_id) % N` | Even distribution | Range queries cross all shards |
+| **Directory-based** | Lookup table maps ID → shard | Flexible | Lookup table is single point of failure |
+| **Geographic** | Users in EU → EU shard | Data residency compliance | Cross-region queries expensive |
+
+**Advantages:**
+- Horizontal scalability — add shards as data grows
+- Each shard handles less load
+
+**Disadvantages:**
+- Cross-shard JOINs are expensive or impossible
+- Transactions across shards require distributed 2PC
+- Application complexity — must know which shard to query
+- Re-sharding is painful
+
+**When to shard:** After you've exhausted read replicas, caching, and vertical scaling. Sharding is a last resort due to complexity.
+
+---
+
+**Q3. Explain database replication and its types.**
+
+**Answer:**
+Replication copies data from a primary (master) to one or more replicas (slaves).
+
+**Types:**
+
+| Type | How | Use Case |
+|------|-----|---------|
+| **Async Replication** | Primary doesn't wait for replica acknowledgment | Faster writes, potential data loss on failover |
+| **Semi-sync Replication** | Primary waits for at least one replica to acknowledge | Balance of performance and safety |
+| **Sync Replication** | Primary waits for ALL replicas | Zero data loss, slower writes |
+
+**MySQL replication (binlog-based):**
+```sql
+-- On Primary
+SHOW MASTER STATUS;  -- Get binlog position
+
+-- On Replica
+CHANGE MASTER TO
+  MASTER_HOST='primary-ip',
+  MASTER_LOG_FILE='mysql-bin.000001',
+  MASTER_LOG_POS=154;
+START SLAVE;
+SHOW SLAVE STATUS\G
+```
+
+**Replication lag:** The replica may be seconds/minutes behind the primary. Critical for apps that write then immediately read (use primary for post-write reads).
+
+---
+
+**Q4. What is connection pooling and why is it critical for high-traffic databases?**
+
+**Answer:**
+Each database connection is expensive (TCP handshake, auth, memory allocation). Without pooling, high traffic causes connection storms.
+
+**Without pooling:**
+- 500 concurrent PHP-FPM workers × each opens a connection = 500 DB connections
+- MySQL max_connections typically 150–300 → connections fail
+
+**With pooling (PgBouncer for PostgreSQL, ProxySQL for MySQL):**
+```
+PHP-FPM workers (500) → ProxySQL pool (20 connections) → MySQL
+```
+
+The pool maintains a small set of persistent connections and queues requests.
+
+**Configuration (MySQL via ProxySQL):**
+```ini
+[proxysql]
+mysql_max_connections=100
+mysql_default_query_timeout=10000
+```
+
+**PHP PDO persistent connections:**
+```php
+$pdo = new PDO($dsn, $user, $pass, [
+    PDO::ATTR_PERSISTENT => true  // Reuse connection per PHP-FPM worker
+]);
+```
+
+---
+
+### ⚖️ Transactions & Isolation
+
+**Q5. Explain the four ACID properties with real-world examples.**
+
+**Answer:**
+
+| Property | Definition | Example |
+|---------|-----------|---------|
+| **Atomicity** | All operations succeed or none do | Bank transfer: debit + credit — if credit fails, debit is rolled back |
+| **Consistency** | Data moves from one valid state to another | Can't have negative account balance after transfer |
+| **Isolation** | Concurrent transactions don't interfere | Two users booking the last seat: only one succeeds |
+| **Durability** | Committed data survives system failure | After `COMMIT`, data persists even if server crashes |
+
+```sql
+-- Atomic transfer
+START TRANSACTION;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+-- Check constraints, then:
+COMMIT;  -- or ROLLBACK if any step failed
+```
+
+---
+
+**Q6. What are transaction isolation levels and what problems does each prevent?**
+
+**Answer:**
+
+**Problems:**
+- **Dirty Read:** Reading uncommitted data from another transaction
+- **Non-repeatable Read:** Same row returns different values within a transaction
+- **Phantom Read:** Same query returns different rows (new rows inserted)
+
+| Isolation Level | Dirty Read | Non-repeatable Read | Phantom Read | Performance |
+|----------------|-----------|--------------------|--------------|-----------| 
+| `READ UNCOMMITTED` | ✅ Possible | ✅ Possible | ✅ Possible | Fastest |
+| `READ COMMITTED` | ❌ Prevented | ✅ Possible | ✅ Possible | Fast |
+| `REPEATABLE READ` | ❌ Prevented | ❌ Prevented | ✅ Possible (❌ in MySQL InnoDB) | Moderate |
+| `SERIALIZABLE` | ❌ Prevented | ❌ Prevented | ❌ Prevented | Slowest |
+
+**MySQL InnoDB default:** `REPEATABLE READ` (with gap locks that also prevent phantom reads).
+
+```sql
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+START TRANSACTION;
+SELECT balance FROM accounts WHERE id = 1;  -- Consistent snapshot
+-- ... other operations ...
+COMMIT;
+```
+
+**Practical advice:** Use `REPEATABLE READ` (default) for most apps. Drop to `READ COMMITTED` for high-concurrency reporting queries where phantom reads are acceptable.
+
+---
+
+**Q7. What is a deadlock and how do you prevent it?**
+
+**Answer:**
+A deadlock occurs when two transactions each hold a lock the other needs.
+
+```
+Transaction A: LOCK row 1 → waits for row 2
+Transaction B: LOCK row 2 → waits for row 1
+→ Deadlock
+```
+
+**Prevention strategies:**
+1. **Consistent lock ordering** — always lock resources in the same order
+   ```sql
+   -- Always lock lower ID first
+   -- Transaction A and B both: lock account 1 first, then account 2
+   ```
+
+2. **Keep transactions short** — minimize time locks are held
+
+3. **Use `SELECT ... FOR UPDATE` explicitly** — acquire locks early
+   ```sql
+   START TRANSACTION;
+   SELECT * FROM orders WHERE id = 5 FOR UPDATE;  -- Lock now
+   UPDATE orders SET status = 'processing' WHERE id = 5;
+   COMMIT;
+   ```
+
+4. **Retry on deadlock** — InnoDB detects deadlocks and rolls back one transaction
+   ```php
+   // Application-level retry
+   for ($attempt = 0; $attempt < 3; $attempt++) {
+       try {
+           DB::transaction(fn() => processOrder($orderId));
+           break;
+       } catch (QueryException $e) {
+           if ($e->getCode() !== '40001') throw $e; // 40001 = deadlock
+           usleep(100000 * $attempt); // Exponential backoff
+       }
+   }
+   ```
+
+---
+
+### 🗂️ Indexing Deep Dive
+
+**Q8. A query is slow even though the column is indexed. What are the possible causes?**
+
+**Answer:**
+
+1. **Function on indexed column** — optimizer can't use the index:
+   ```sql
+   -- ❌ Slow — YEAR() prevents index use
+   SELECT * FROM orders WHERE YEAR(created_at) = 2024;
+
+   -- ✅ Fast — range query uses index
+   SELECT * FROM orders WHERE created_at BETWEEN '2024-01-01' AND '2024-12-31';
+   ```
+
+2. **Type mismatch** — implicit casting disables index:
+   ```sql
+   -- ❌ Slow — user_id is INT but '5' is VARCHAR
+   SELECT * FROM orders WHERE user_id = '5';
+   ```
+
+3. **Leading wildcard in LIKE**:
+   ```sql
+   -- ❌ Full table scan
+   SELECT * FROM products WHERE name LIKE '%phone%';
+
+   -- ✅ Uses index (prefix search)
+   SELECT * FROM products WHERE name LIKE 'phone%';
+   ```
+
+4. **Low selectivity** — column has few distinct values (e.g., `status` with 3 values). Optimizer may prefer full scan.
+
+5. **Wrong composite index order:**
+   ```sql
+   -- Index: (status, created_at)
+   -- ❌ Can't use index efficiently — skipping leading column
+   SELECT * FROM orders WHERE created_at > '2024-01-01';
+
+   -- ✅ Uses index — leading column is present
+   SELECT * FROM orders WHERE status = 'pending' AND created_at > '2024-01-01';
+   ```
+
+6. **Table statistics stale** — run `ANALYZE TABLE orders;`
+
+---
+
+**Q9. What is a covering index and why is it powerful?**
+
+**Answer:**
+A **covering index** includes ALL columns a query needs — the database never has to access the actual table rows (no "table heap" lookup).
+
+```sql
+-- Query
+SELECT name, email FROM users WHERE company_id = 5 ORDER BY name;
+
+-- Regular index on company_id: 
+--   1. Search index for company_id=5 (gets primary key IDs)
+--   2. For each ID, fetch row from table heap (to get name, email)
+
+-- Covering index: (company_id, name, email)
+CREATE INDEX idx_covering ON users(company_id, name, email);
+-- ✅ All data found in index — zero table heap access
+```
+
+EXPLAIN will show `Using index` (not `Using index; Using temporary`) for a covering index.
+
+**When to use:** High-frequency queries on large tables where the index + data columns are narrow.  
+**Trade-off:** Wider indexes = more storage and slower writes.
+
+---
+
+### 🔵 NoSQL vs SQL
+
+**Q10. SQL vs NoSQL — when do you choose each?**
+
+**Answer:**
+
+| Criteria | SQL (Relational) | NoSQL |
+|---------|-----------------|-------|
+| **Data structure** | Fixed schema, structured | Flexible schema, semi-structured |
+| **Relationships** | Foreign keys, JOINs | Denormalized, embedded documents |
+| **ACID** | Native | Varies (MongoDB 4+ supports multi-doc ACID) |
+| **Scaling** | Vertical first, horizontal complex | Horizontal by design |
+| **Query complexity** | Rich SQL, complex JOINs | Limited or application-side JOINs |
+| **Consistency** | Strong | Eventual (usually configurable) |
+
+**NoSQL types and use cases:**
+
+| Type | Examples | Best For |
+|------|---------|---------|
+| **Document** | MongoDB, CouchDB | Content management, user profiles, catalogs |
+| **Key-Value** | Redis, DynamoDB | Caching, sessions, leaderboards, rate limiting |
+| **Column-family** | Cassandra, HBase | Time-series data, analytics at massive scale |
+| **Graph** | Neo4j, Amazon Neptune | Social networks, recommendation engines, fraud detection |
+
+**Choose SQL when:** Data has clear relationships, you need complex queries, transactions are critical (banking, inventory).  
+**Choose NoSQL when:** Schema is evolving, massive write throughput needed, data is naturally document-shaped, or you need geo-distribution.
+
+---
+
+**Q11. What is the CAP theorem and how does it apply to database selection?**
+
+**Answer:**
+CAP theorem states that a distributed system can only guarantee **2 of 3** properties simultaneously:
+
+- **C**onsistency — every read gets the most recent write
+- **A**vailability — every request gets a response (may be stale)
+- **P**artition Tolerance — system continues operating if network partitions occur
+
+Since network partitions are unavoidable in distributed systems, you're always choosing between **CP** or **AP**.
+
+| System | Type | Trade-off |
+|--------|------|-----------|
+| MySQL (single node) | CA | Not partition tolerant — not distributed |
+| MySQL + sync replication | CP | Blocks writes during partition |
+| Cassandra | AP | Returns stale data during partition |
+| MongoDB (default) | CP | Primary elections during partition |
+| DynamoDB | AP | Eventual consistency by default |
+| Redis Cluster | AP | Reads may be stale during partition |
+
+**PACELC** (extended CAP): Also considers Latency vs Consistency tradeoff when there's no partition.
+
+---
+
+**Q12. What is the difference between optimistic and pessimistic locking?**
+
+**Answer:**
+
+**Pessimistic Locking** — assumes conflict will happen, locks immediately:
+```sql
+-- Lock row for the duration of the transaction
+START TRANSACTION;
+SELECT * FROM inventory WHERE product_id = 1 FOR UPDATE;  -- Other transactions blocked
+UPDATE inventory SET quantity = quantity - 1 WHERE product_id = 1;
+COMMIT;
+```
+**Use when:** High contention (popular item inventory), must prevent any data race.
+
+**Optimistic Locking** — assumes conflict is rare, check at save time:
+```sql
+-- Read with version
+SELECT quantity, version FROM inventory WHERE product_id = 1;
+-- (version = 5, quantity = 10)
+
+-- Update only if version hasn't changed
+UPDATE inventory 
+SET quantity = 9, version = 6 
+WHERE product_id = 1 AND version = 5;
+-- If 0 rows affected → someone else modified it → retry
+```
+
+**In Eloquent (via `updated_at` timestamp):**
+```php
+// Optimistic locking with version column
+$inventory = Inventory::find(1);
+$inventory->quantity -= 1;
+$affected = Inventory::where('id', 1)
+    ->where('version', $inventory->version)
+    ->update(['quantity' => $inventory->quantity, 'version' => $inventory->version + 1]);
+
+if ($affected === 0) {
+    throw new StaleDataException('Record was modified concurrently');
+}
+```
+
+| Approach | Best When | Downside |
+|---------|----------|---------|
+| Pessimistic | High contention, financial data | Performance (locks held longer) |
+| Optimistic | Low contention, read-heavy | Must handle retry logic |
+
+---
+
+### 🧮 Query Optimization
+
+**Q13. What does EXPLAIN output tell you and what are the key fields to watch?**
+
+**Answer:**
+
+```sql
+EXPLAIN SELECT u.name, COUNT(o.id) 
+FROM users u 
+LEFT JOIN orders o ON o.user_id = u.id 
+WHERE u.active = 1 
+GROUP BY u.id;
+```
+
+| Field | What to Watch For |
+|-------|------------------|
+| **type** | `ALL` = full scan (bad), `index` = index scan, `ref` = index lookup, `eq_ref` = primary key lookup (best), `const` = single row |
+| **key** | Which index was used. `NULL` = no index used |
+| **rows** | Estimated rows examined. Multiply across JOINs for total cost |
+| **Extra** | `Using filesort` = expensive sort, `Using temporary` = temp table, `Using index` = covering index (good) |
+| **filtered** | % of rows remaining after filtering. Low % = effective index |
+
+**Red flags:** `type = ALL` on large tables, `Extra = Using filesort` or `Using temporary` on high-frequency queries.
+
+---
+
+**Q14. When should you use a stored procedure vs application-level code?**
+
+**Answer:**
+
+| Criteria | Stored Procedure | Application Code |
+|---------|-----------------|-----------------|
+| **Performance** | Faster for complex, data-intensive operations (less network round trips) | Network overhead for multiple queries |
+| **Portability** | DB-specific syntax | Language-agnostic |
+| **Version control** | Harder to track | Git-friendly |
+| **Testing** | Difficult to unit test | Easy with mocks |
+| **Debugging** | Limited tooling | Full debugger support |
+| **Business logic** | Should generally NOT live here | Preferred location |
+
+**Stored procedures make sense for:**
+- Batch operations on millions of rows (ETL jobs)
+- Audit triggers that must fire regardless of application
+- Calculations that need to join many tables in a single DB call
+
+**Modern recommendation:** Keep business logic in application code. Use stored procedures sparingly for performance-critical, data-intensive operations that don't fit in ORM.
+
+---
+
+**Q15. What is database partitioning and how does it differ from sharding?**
+
+**Answer:**
+
+| Aspect | Partitioning | Sharding |
+|--------|-------------|---------|
+| **Location** | Same server, different physical segments | Different servers |
+| **Transparency** | Transparent to application (single table name) | Application must route to correct shard |
+| **Complexity** | Low | High |
+| **Scale** | Single server limits still apply | True horizontal scale |
+| **Use case** | Large tables on powerful single server | Distributed systems |
+
+**MySQL Partitioning types:**
+```sql
+-- Range partitioning by year
+CREATE TABLE orders (
+    id INT,
+    created_at DATE,
+    amount DECIMAL(10,2)
+)
+PARTITION BY RANGE (YEAR(created_at)) (
+    PARTITION p2022 VALUES LESS THAN (2023),
+    PARTITION p2023 VALUES LESS THAN (2024),
+    PARTITION p2024 VALUES LESS THAN (2025),
+    PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+```
+
+**Benefits:** Partition pruning — `WHERE created_at > '2024-01-01'` only scans the 2024 partition.
+
+---
+
+### 🔬 Advanced Concepts
+
+**Q16. What is the difference between `DELETE`, `TRUNCATE`, and `DROP`?**
+
+**Answer:**
+
+| Command | What it does | Rollback? | Triggers? | Speed |
+|---------|-------------|-----------|----------|-------|
+| `DELETE` | Removes rows with WHERE filter | ✅ Yes (in transaction) | ✅ Yes | Slow (row-by-row) |
+| `TRUNCATE` | Removes ALL rows, resets auto-increment | ❌ No (DDL in most DBs) | ❌ No | Fast (deallocates pages) |
+| `DROP` | Removes entire table structure + data | ❌ No | ❌ No | Instant |
+
+```sql
+DELETE FROM users WHERE active = 0;          -- Selective, logged, triggers fire
+TRUNCATE TABLE sessions;                     -- Fast wipe, no triggers
+DROP TABLE temp_import;                      -- Destroy table entirely
+```
+
+**Interview trap:** TRUNCATE cannot be rolled back in MySQL (DDL auto-commits). PostgreSQL allows rolling back TRUNCATE.
+
+---
+
+**Q17. What is the difference between a view and a materialized view?**
+
+**Answer:**
+
+| Feature | View | Materialized View |
+|---------|------|------------------|
+| **Data storage** | No — executes query on access | Yes — stores query result physically |
+| **Performance** | Same as underlying query | Fast reads (pre-computed) |
+| **Freshness** | Always up-to-date | Stale until refreshed |
+| **Refresh** | N/A | Manual or scheduled `REFRESH MATERIALIZED VIEW` |
+| **MySQL support** | ✅ Yes | ❌ No (use summary tables instead) |
+| **PostgreSQL support** | ✅ Yes | ✅ Yes |
+
+```sql
+-- PostgreSQL Materialized View
+CREATE MATERIALIZED VIEW monthly_revenue AS
+SELECT DATE_TRUNC('month', created_at) as month,
+       SUM(amount) as total
+FROM orders
+GROUP BY 1;
+
+-- Refresh (blocking)
+REFRESH MATERIALIZED VIEW monthly_revenue;
+
+-- Non-blocking refresh (PostgreSQL 9.4+)
+REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_revenue;
+```
+
+**Use when:** Complex aggregations that are expensive to compute on every read but can tolerate slight staleness (reporting dashboards, analytics).
+
+---
+
+**Q18. What is the difference between `HAVING` and `WHERE`?**
+
+**Answer:**
+
+```sql
+-- WHERE filters BEFORE grouping (works on individual rows)
+-- HAVING filters AFTER grouping (works on aggregate results)
+
+-- ❌ Wrong: Can't use aggregate in WHERE
+SELECT department, AVG(salary) as avg_salary
+FROM employees
+WHERE AVG(salary) > 50000  -- Error!
+GROUP BY department;
+
+-- ✅ Correct: Use HAVING for aggregate conditions
+SELECT department, AVG(salary) as avg_salary
+FROM employees
+WHERE active = 1          -- Pre-aggregation filter (reduces rows before grouping)
+GROUP BY department
+HAVING AVG(salary) > 50000;  -- Post-aggregation filter
+```
+
+**Performance tip:** Always filter with `WHERE` as much as possible before `GROUP BY` — reduces the number of rows being aggregated.
+
+---
+
+**Q19. Explain window functions and when to use them over GROUP BY.**
+
+**Answer:**
+Window functions compute values across a set of rows related to the current row **without collapsing rows** (unlike GROUP BY).
+
+```sql
+-- GROUP BY collapses to one row per group
+SELECT department, AVG(salary) FROM employees GROUP BY department;
+
+-- Window function — keeps all rows, adds aggregated column
+SELECT 
+    name,
+    department,
+    salary,
+    AVG(salary) OVER (PARTITION BY department) as dept_avg,
+    RANK() OVER (PARTITION BY department ORDER BY salary DESC) as salary_rank,
+    ROW_NUMBER() OVER (ORDER BY hire_date) as hire_sequence,
+    LAG(salary, 1) OVER (PARTITION BY department ORDER BY hire_date) as prev_salary
+FROM employees;
+```
+
+**Common window functions:**
+
+| Function | Use Case |
+|---------|---------|
+| `ROW_NUMBER()` | Unique sequential number per partition |
+| `RANK()` | Ranking with gaps on ties |
+| `DENSE_RANK()` | Ranking without gaps on ties |
+| `LAG(col, n)` | Access previous row's value |
+| `LEAD(col, n)` | Access next row's value |
+| `SUM() OVER` | Running total |
+| `FIRST_VALUE()` | First value in window |
+| `NTILE(n)` | Divide rows into n buckets |
+
+**Use over GROUP BY when:** You need both individual row data AND aggregated data in the same query result.
+
+---
+
+**Q20. What is the difference between `UNION` and `UNION ALL`? What about `INTERSECT` and `EXCEPT`?**
+
+**Answer:**
+
+```sql
+-- UNION: Combines results, removes duplicates (sorts/dedupes — slower)
+SELECT email FROM users UNION SELECT email FROM admins;
+
+-- UNION ALL: Combines all results, keeps duplicates (faster — no dedup)
+SELECT email FROM users UNION ALL SELECT email FROM admins;
+
+-- INTERSECT: Returns rows that exist in BOTH result sets
+SELECT email FROM users INTERSECT SELECT email FROM newsletter_subscribers;
+
+-- EXCEPT (MINUS in Oracle): Rows in first result but NOT in second
+SELECT email FROM users EXCEPT SELECT email FROM unsubscribed_users;
+```
+
+**Performance:** Always use `UNION ALL` unless you need deduplication — `UNION` forces a sort/hash to remove duplicates.
+
+| Operator | Returns | Deduplication |
+|---------|---------|--------------|
+| `UNION` | A ∪ B | ✅ Yes (slower) |
+| `UNION ALL` | A + B (all rows) | ❌ No (faster) |
+| `INTERSECT` | A ∩ B | ✅ Yes |
+| `EXCEPT`/`MINUS` | A − B | ✅ Yes |
+
+**Note:** MySQL does not natively support `INTERSECT` or `EXCEPT` before version 8.0.31. Use JOINs or subqueries instead.
+

@@ -638,3 +638,279 @@ Deep dive into:
 ---
 
 **Remember**: There's no single "correct" design. Focus on demonstrating your thought process, trade-off analysis, and ability to handle complexity.
+
+---
+
+## 🎯 System Design Interview Questions — Critical Scenarios
+
+---
+
+### 📊 Back-of-Envelope Estimation
+
+**Q1. How do you estimate system capacity requirements? Design a URL shortener that handles 100M URLs.**
+
+**Answer:**
+
+**Step 1: Clarify requirements**
+- Write: 100M new URLs/day → read ratio 10:1 → 1B reads/day
+- URLs expire after 5 years
+- Short URL length: 7 characters (62^7 = 3.5 trillion combinations)
+
+**Step 2: Capacity estimation**
+```
+Write QPS:  100M / 86400 = ~1,160 writes/sec
+Read QPS:   1B / 86400 = ~11,600 reads/sec
+Peak QPS:   ×2 = 2,320 writes, 23,200 reads
+
+Storage:
+  URL entry: ~500 bytes (short URL + long URL + metadata)
+  Per day: 100M × 500 bytes = 50 GB/day
+  5 years: 50 GB × 365 × 5 = ~90 TB
+
+Bandwidth:
+  Read: 11,600 req/s × 500 bytes = ~5.8 MB/s (trivial)
+  Write: 1,160 req/s × 500 bytes = ~580 KB/s
+
+Cache:
+  80/20 rule: 20% of URLs = 80% of traffic
+  Daily cache: 11,600 reads/s × 86400 × 20% × 500 bytes = ~100 GB
+  → Multiple cache servers (Redis cluster)
+```
+
+**Step 3: High-level design**
+```
+Write path:
+  Client → API Gateway → App Server → ID Generator (Snowflake) → DB (MySQL)
+                                   → Cache (Redis) invalidation
+
+Read path:
+  Client → CDN (cache 301/302 redirect) → if miss → App Server → Redis → MySQL
+```
+
+**Step 4: Key decisions**
+- **ID generation:** Snowflake (distributed, monotonic 64-bit IDs) → base62 encode → 7 chars
+- **Redirection:** 301 (permanent, CDN caches) vs 302 (temporary, tracks clicks)
+- **DB sharding:** Shard by short URL hash (consistent hashing across 5-10 shards)
+- **Cache strategy:** Cache-aside, TTL = 24h for popular URLs
+
+---
+
+**Q2. Design a distributed rate limiter that works across multiple server instances.**
+
+**Answer:**
+
+**Problem with local rate limiting:**
+```
+10 app servers, limit: 100 req/min per user
+Server 1: User makes 100 requests → allowed (limit hit)
+User switches to Server 2: 100 more requests → allowed again!
+Local counters don't share state
+```
+
+**Solution: Centralized counter (Redis) with Lua atomicity:**
+```lua
+-- Sliding window log algorithm in Redis Lua (atomic)
+local key = KEYS[1]          -- "ratelimit:user:123"
+local window = tonumber(ARGV[1])  -- 60 seconds
+local limit = tonumber(ARGV[2])   -- 100 requests
+local now = tonumber(ARGV[3])     -- Current timestamp ms
+
+-- Remove entries outside the window
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window * 1000)
+
+-- Count requests in window
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+    -- Add current request
+    redis.call('ZADD', key, now, now)
+    redis.call('EXPIRE', key, window)
+    return 1  -- Allowed
+else
+    return 0  -- Rate limited
+end
+```
+
+**Rate limiting algorithms comparison:**
+
+| Algorithm | Accuracy | Memory | Burst handling | Implementation |
+|-----------|---------|--------|---------------|----------------|
+| **Fixed Window** | Low (boundary bursts) | O(1) | Allows 2× at window boundary | Counter + TTL |
+| **Sliding Window Log** | Perfect | O(n) per user | Smooth | Sorted Set in Redis |
+| **Sliding Window Counter** | Good approximation | O(1) | Smooth | 2 counters + interpolation |
+| **Token Bucket** | Perfect | O(1) | Configurable burst | Tokens + timestamp |
+| **Leaky Bucket** | Perfect | O(n) | None (smooths output) | Queue + timer |
+
+**Token Bucket in Redis:**
+```lua
+local tokens = tonumber(redis.call('HGET', key, 'tokens') or capacity)
+local last_refill = tonumber(redis.call('HGET', key, 'last_refill') or now)
+local elapsed = (now - last_refill) / 1000  -- seconds
+
+-- Refill tokens based on elapsed time
+local new_tokens = math.min(capacity, tokens + elapsed * refill_rate)
+
+if new_tokens >= 1 then
+    redis.call('HMSET', key, 'tokens', new_tokens - 1, 'last_refill', now)
+    return 1  -- Allowed
+else
+    return 0  -- Denied
+end
+```
+
+---
+
+**Q3. Design a notification system that can deliver 10M push notifications per day.**
+
+**Answer:**
+
+**Requirements clarification:**
+- Channels: Push (mobile), Email, SMS, in-app
+- Delivery: Best-effort (push) vs guaranteed (email)
+- Priority: Transactional (OTP) > Marketing
+
+**Architecture:**
+```
+Trigger Sources:
+  User action → API event → NotificationService
+  Scheduled jobs → CronTrigger → NotificationService
+
+NotificationService:
+  1. Validate user preferences (don't send if unsubscribed)
+  2. Rate limit per user (max 10 notifications/hour)
+  3. Template rendering
+  4. Route to appropriate channel queue
+
+Channel Queues (separate priority queues):
+  - transactional:push    (SQS FIFO, high priority)
+  - transactional:email   (SQS FIFO, high priority)
+  - marketing:push        (SQS standard, low priority)
+
+Channel Workers:
+  PushWorker → FCM (Android) / APNs (iOS) → Handle failures → retry/deadletter
+  EmailWorker → SES/SendGrid → bounce/complaint handling
+  SMSWorker → Twilio → delivery receipt tracking
+```
+
+**Scaling to 10M/day:**
+```
+10M notifications/day = 116/sec average = ~350/sec peak
+
+Push notifications (FCM batch API): 1000 per request → 0.35 FCM req/sec (trivial)
+Email (SES): 14 emails/sec → SES handles 100k+/sec — fine
+SMS: Most expensive — batch by provider for cost optimization
+
+Worker scaling:
+  Auto-scaling based on queue depth
+  SQS → CloudWatch alarm → scale out ECS tasks
+  Target: < 5 min queue depth for transactional
+```
+
+**Handling failures:**
+```
+FCM returns failure codes per token:
+  - NotRegistered: Token expired → delete from DB
+  - Unavailable: Device offline → retry with exponential backoff
+  - InvalidRegistration: Bad token → delete
+
+Dead letter queue for failed after 3 retries:
+  Alert on-call → manual investigation or drop (marketing)
+```
+
+---
+
+**Q4. What consistency patterns should you use when designing a distributed e-commerce checkout?**
+
+**Answer:**
+
+**The problem:** Checkout spans multiple services — inventory must be decremented, payment charged, order created. These must either all succeed or all fail.
+
+**Saga Pattern (distributed transactions without 2PC):**
+```
+Choreography-based Saga:
+  OrderService creates order (status: PENDING)
+    → publishes OrderCreated event
+  InventoryService receives event → reserves items
+    → publishes InventoryReserved (or InventoryInsufficient)
+  PaymentService receives event → charges card
+    → publishes PaymentCompleted (or PaymentFailed)
+  OrderService receives completion → status: CONFIRMED
+                                  → or triggers compensating transactions
+
+Compensating transactions (rollback):
+  PaymentFailed → InventoryService releases reservation
+                → OrderService marks order FAILED
+```
+
+**2PC vs Saga:**
+| Aspect | 2PC | Saga |
+|--------|-----|------|
+| **Consistency** | Strong (ACID) | Eventual |
+| **Coupling** | Tight (coordinator knows all) | Loose (events) |
+| **Performance** | Slow (blocking locks) | Fast (async) |
+| **Failure recovery** | Complex (coordinator single point) | Per-service compensating transactions |
+| **Use when** | Same DB, financial ledger | Microservices, cross-service |
+
+**Idempotency keys for payment:**
+```php
+// Client generates UUID before calling payment API
+$idempotencyKey = Str::uuid();
+$payment = $paymentService->charge(
+    amount: 9999,
+    idempotencyKey: $idempotencyKey  // Safe to retry with same key
+);
+// If network fails and client retries → same key → same result, no double charge
+```
+
+---
+
+**Q5. How would you design a real-time collaborative document editor (like Google Docs)?**
+
+**Answer:**
+
+**Core challenge:** Multiple users editing the same document simultaneously → conflicts.
+
+**Operational Transformation (OT) — traditional approach:**
+```
+User A: Delete char at position 5
+User B simultaneously: Insert "hello" at position 3
+
+Without OT: Operations applied in different orders → divergent state
+With OT: Transform B's operation relative to A's
+  After A deletes position 5, B's insert becomes position 3 (unchanged if insert was before delete)
+  After B inserts at 3, A's delete shifts to position 8 (shifted by 5 chars)
+```
+
+**CRDT (Conflict-free Replicated Data Type) — modern approach:**
+```
+Each character has: unique ID + position + tombstone flag
+Operations are commutative (order doesn't matter) and idempotent
+No central coordinator needed — peers can sync directly
+Used by: Figma, Notion (Y.js), Apple Notes
+```
+
+**Architecture:**
+```
+Client ──WebSocket──► Doc Server (WebSocket)
+                        │
+                        ├── Operation log (Kafka — ordered, durable)
+                        │
+                        ├── State store (Redis — current doc state for fast sync)
+                        │
+                        └── DB (PostgreSQL — periodic snapshots)
+
+Sync flow:
+  Client connects → server sends current version + doc snapshot
+  Client makes edit → operation sent to server
+  Server applies OT/CRDT → broadcasts to all connected clients
+  Server writes operation to Kafka (durable log)
+  Periodic snapshot to DB (for new client cold start)
+```
+
+**Presence (who is editing where):**
+```
+WebSocket heartbeat every 2s:
+  {userId: 123, cursor: {line: 5, col: 12}, selection: {...}}
+Server broadcasts to all session participants
+Store in Redis with 5s TTL (auto-expires if client disconnects)
+```

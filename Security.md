@@ -922,3 +922,271 @@ snyk test
 ---
 
 **Remember**: Security is not a one-time task but an ongoing process. Stay updated with latest vulnerabilities and best practices!
+
+---
+
+## 🎯 Security Interview Questions — Critical Scenarios
+
+---
+
+### 🔐 Authentication Deep Dive
+
+**Q1. What is the difference between symmetric and asymmetric JWT signing, and when do you use RS256 vs HS256?**
+
+**Answer:**
+
+| Feature | HS256 (HMAC-SHA256) | RS256 (RSA-SHA256) |
+|---------|--------------------|--------------------|
+| **Algorithm** | Symmetric (shared secret) | Asymmetric (private/public key pair) |
+| **Key count** | 1 shared secret | 2 keys: private (sign) + public (verify) |
+| **Token issuer** | Knows the secret | Only holds private key |
+| **Token consumer** | Must have the secret | Only needs public key (safe to share) |
+| **Revocation** | Secret rotation invalidates all tokens | Key rotation, or check revocation list |
+| **Use case** | Single trusted service, simpler setup | Microservices, third-party token verification |
+
+**HS256 problem in microservices:**
+```
+Auth Service signs with secret "abc123"
+→ All microservices MUST know "abc123" to verify
+→ Any microservice can also ISSUE tokens (security risk)
+```
+
+**RS256 solution:**
+```
+Auth Service signs with PRIVATE key (never shared)
+→ Microservices only have PUBLIC key (safe to distribute)
+→ Can verify but cannot create tokens
+→ Publish public key at /.well-known/jwks.json (JWKS endpoint)
+```
+
+**JWT vulnerability — "alg: none" attack:**
+```json
+// ❌ Attacker modifies header to bypass signature verification
+{ "alg": "none", "typ": "JWT" }
+// If server accepts alg:none, signature is skipped entirely
+```
+**Prevention:** Explicitly whitelist allowed algorithms, never accept `alg: none`.
+
+---
+
+**Q2. What is OAuth 2.0 and explain the different grant types?**
+
+**Answer:**
+OAuth 2.0 is an authorization framework (not authentication) for delegated access.
+
+**Authorization Code Flow** (most secure, for server-side apps):
+```
+1. User clicks "Login with Google"
+2. App redirects: GET accounts.google.com/o/oauth2/auth?client_id=...&redirect_uri=...&scope=email
+3. User authenticates with Google
+4. Google redirects: GET yourapp.com/callback?code=AUTHORIZATION_CODE
+5. App exchanges code: POST https://oauth2.googleapis.com/token (code + client_secret)
+6. Google returns: { "access_token": "...", "refresh_token": "..." }
+```
+
+**PKCE (Proof Key for Code Exchange)** — adds security for SPAs/mobile where client_secret can't be stored:
+```
+App generates: code_verifier (random), code_challenge = SHA256(code_verifier)
+Step 2: Includes code_challenge in auth URL
+Step 5: Sends code_verifier instead of client_secret
+→ Even if auth code is intercepted, attacker can't exchange it without code_verifier
+```
+
+| Grant Type | Use Case | Security |
+|-----------|---------|---------|
+| **Authorization Code + PKCE** | Web apps, mobile, SPAs | High |
+| **Client Credentials** | Server-to-server (no user) | High |
+| **Implicit** | ❌ Deprecated — SPA token in URL fragment | Low |
+| **Resource Owner Password** | ❌ Deprecated — user gives credentials to client | Low |
+| **Device Code** | Smart TVs, CLI tools | Medium |
+
+---
+
+**Q3. How do you prevent SQL injection beyond parameterized queries?**
+
+**Answer:**
+Parameterized queries are the primary defense but defense-in-depth adds more layers:
+
+```php
+// Layer 1: Parameterized queries (mandatory)
+$stmt = $pdo->prepare("SELECT * FROM users WHERE email = ?");
+$stmt->execute([$email]);
+
+// Layer 2: Input validation — reject obviously invalid input early
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    throw new ValidationException("Invalid email format");
+}
+
+// Layer 3: Principle of least privilege — DB user has minimal permissions
+// App DB user: SELECT, INSERT, UPDATE (no DROP, no GRANT, no system access)
+
+// Layer 4: Stored procedures with parameterized calls
+$stmt = $pdo->prepare("CALL GetUserByEmail(?)");
+
+// Layer 5: Web Application Firewall (WAF)
+// Nginx ModSecurity, AWS WAF — blocks common injection patterns
+
+// Layer 6: Error handling — never expose DB errors to users
+try {
+    $stmt->execute([$email]);
+} catch (PDOException $e) {
+    Log::error('DB error', ['message' => $e->getMessage()]);
+    throw new RuntimeException("Service temporarily unavailable");
+    // Never: echo $e->getMessage();
+}
+```
+
+**Second-order SQL injection** (often missed):
+```php
+// User registers with name: admin'--
+$name = "admin'--";
+User::create(['name' => $name]);  // Safe (parameterized)
+
+// Later, developer uses stored name unsafely
+$query = "SELECT * FROM users WHERE name = '" . $user->name . "'";
+// Executes: SELECT * FROM users WHERE name = 'admin'--'
+// → SQL injection from data already in DB
+```
+**Defense:** Always use parameterized queries even for data from your own DB.
+
+---
+
+### 🛡️ Modern Security Concepts
+
+**Q4. What is Zero Trust Architecture?**
+
+**Answer:**
+Zero Trust replaces the old "castle and moat" model (trust everything inside the network) with **"never trust, always verify"**.
+
+**Old model problem:**
+```
+Outside → Firewall → Inside network (trusted zone)
+                    → Employee laptop (trusted)
+                    → Any internal service (trusted)
+Attacker gains internal access → Everything trusted → Lateral movement easy
+```
+
+**Zero Trust principles:**
+1. **Verify explicitly** — Authenticate and authorize every request, every time (device, user, location, time)
+2. **Least privilege access** — Minimal permissions, just-in-time access
+3. **Assume breach** — Design assuming attackers are already inside, segment everything
+
+**Implementation:**
+```
+Request → Identity verification (user + device cert)
+        → Authorization (can this user+device access this resource?)
+        → Context check (is this unusual? Location? Time? Risk score?)
+        → Encrypted connection (mTLS everywhere, even internal)
+        → Audit log every request
+```
+
+**Technologies:** mTLS (mutual TLS), Service Mesh (Istio), Identity-Aware Proxy (Google BeyondCorp), SPIFFE/SPIRE for workload identity.
+
+---
+
+**Q5. What are the most critical HTTP security headers and what does each prevent?**
+
+**Answer:**
+
+```nginx
+# Nginx security headers
+server {
+    # Prevent clickjacking (iframe embedding)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+
+    # Prevent MIME type sniffing (stops browser guessing content type)
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Enforce HTTPS (HSTS) — 1 year, include subdomains, preload
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    # Content Security Policy — restrict resource origins
+    add_header Content-Security-Policy "
+        default-src 'self';
+        script-src 'self' https://cdn.trusted.com;
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: https:;
+        font-src 'self';
+        connect-src 'self' https://api.myapp.com;
+        frame-ancestors 'none';
+    " always;
+
+    # Referrer Policy — control referrer header
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Permissions Policy — control browser features
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(self)" always;
+}
+```
+
+| Header | Prevents |
+|--------|---------|
+| X-Frame-Options | Clickjacking (site embedded in malicious iframe) |
+| X-Content-Type-Options | MIME sniffing attacks |
+| HSTS | Protocol downgrade attacks, cookie hijacking over HTTP |
+| CSP | XSS (restricts where scripts can load from) |
+| Referrer-Policy | Leaking sensitive URL parameters to third parties |
+
+**Test your headers:** securityheaders.com
+
+---
+
+**Q6. What is a timing attack and how do you prevent it in PHP?**
+
+**Answer:**
+Timing attacks exploit the fact that `===` comparisons return early on mismatch — measuring response time reveals how many characters matched.
+
+```php
+// ❌ Vulnerable — string comparison returns early
+if ($token === $storedToken) { ... }
+// If tokens differ at character 3, returns faster than if they differ at character 10
+// Attacker brute-forces character by character by measuring timing
+
+// ✅ Safe — constant-time comparison (always compares all bytes)
+if (hash_equals($storedToken, $userToken)) { ... }
+
+// Also safe for passwords:
+if (password_verify($inputPassword, $storedHash)) { ... }
+// password_verify uses constant-time internally
+```
+
+**Where it matters:**
+- API token comparison
+- CSRF token comparison  
+- HMAC signature comparison
+- Password comparison (use `password_verify`, never `===`)
+
+**Prevention:** Always use `hash_equals()` for any security-sensitive string comparison in PHP.
+
+---
+
+**Q7. Explain the difference between authentication vulnerabilities: Credential Stuffing, Brute Force, and Password Spraying.**
+
+**Answer:**
+
+| Attack | Method | Scale | Detection |
+|--------|--------|-------|-----------|
+| **Brute Force** | Try all password combinations for one account | Many passwords, one user | Account lockout after N failures |
+| **Credential Stuffing** | Use leaked username/password pairs from other breaches | Many credentials, many users | Check against HaveIBeenPwned API |
+| **Password Spraying** | Try 1-2 common passwords across many accounts | Few passwords, many users | Avoids per-account lockout |
+| **Phishing** | Trick users into entering credentials on fake site | Any scale | MFA, user education |
+
+**Defense in depth:**
+```php
+// Rate limiting per IP
+RateLimiter::attempt('login:' . $request->ip(), 10, fn() => null, 60);
+
+// Rate limiting per account (password spraying protection)
+RateLimiter::attempt('login:account:' . $email, 5, fn() => null, 300);
+
+// CAPTCHA after N failures
+if ($failureCount > 3) { requireCaptcha(); }
+
+// Check against breach database
+if (HaveIBeenPwned::isPasswordBreached($password)) {
+    return response()->json(['error' => 'This password has appeared in data breaches'], 422);
+}
+
+// MFA — even correct password requires second factor
+// Geolocation check — alert on unusual login location
+```

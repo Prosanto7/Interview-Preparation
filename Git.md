@@ -1019,3 +1019,295 @@ git diff
 ---
 
 **Remember:** Git is powerful but can be complex. Don't be afraid to ask for help, and always commit often!
+
+---
+
+## 🎯 Git Interview Questions — Critical Scenarios
+
+---
+
+### 🌿 Branching Strategies
+
+**Q1. Compare Git Flow, GitHub Flow, and Trunk-Based Development — when would you use each?**
+
+**Answer:**
+
+| Aspect | Git Flow | GitHub Flow | Trunk-Based |
+|--------|---------|-------------|------------|
+| **Branches** | main, develop, feature/*, hotfix/*, release/* | main + feature branches | main only (+ short-lived branches < 2 days) |
+| **Release model** | Scheduled releases | Continuous delivery | Continuous deployment |
+| **Team size** | Large teams, versioned software | Small-medium teams | Any (requires CI/CD maturity) |
+| **Deployment frequency** | Low (weekly/monthly) | Medium (daily) | High (multiple times/day) |
+| **Complexity** | High (many branch types) | Low | Low |
+
+**Git Flow — use when:**
+- Shipping versioned software (mobile app, library)
+- Multiple versions maintained simultaneously
+- Separate QA environment requiring stabilization time
+- Large enterprise teams with strict release gates
+
+**GitHub Flow — use when:**
+- Web app with single production version
+- Continuous delivery (deploy on merge to main)
+- Small teams with fast review cycles
+
+**Trunk-Based Development — use when:**
+- High deployment frequency (10+ times/day)
+- Strong CI/CD and feature flags in place
+- Google, Facebook, Netflix use this model
+- Requires: pair programming or thorough code review + automated gates
+
+```
+Trunk-Based with feature flags:
+  All devs commit to main
+  Unfinished features hidden behind flags:
+    if (FeatureFlag::enabled('new-checkout')) {
+        // New code (in production, but inactive)
+    } else {
+        // Old code
+    }
+  Feature flag enabled → gradual rollout → full release
+```
+
+---
+
+**Q2. What is the difference between `git merge`, `git rebase`, and `git squash` — when is each appropriate?**
+
+**Answer:**
+
+**`git merge`** — preserves complete history, creates merge commit
+```
+feature: A--B--C
+              \
+main:    X--Y--M   (M = merge commit)
+```
+
+**`git rebase`** — rewrites history, replays commits on top of target
+```
+feature (before): X--Y--A--B--C
+feature (after):  X--Y--Z--A'--B'--C'  (rebased onto new main)
+No merge commit — linear history
+```
+
+**`git squash`** — combines feature commits into one before merging
+```
+feature: A--B--C--D (4 commits, some are WIP)
+main after squash-merge: X--Y--ABCD (one clean commit)
+```
+
+| Approach | History | Use When |
+|---------|---------|---------|
+| **Merge** | Non-linear, preserves all commits | Collaborative branches, audit trails |
+| **Rebase** | Linear, rewrites commits | Before submitting PR (clean up WIP commits) |
+| **Squash** | Single commit per feature | Feature branches with messy commit history |
+
+**Golden rule of rebase:** Never rebase shared/public branches — rewrites history breaks collaborators' branches.
+
+```bash
+# Typical PR workflow
+git checkout feature/payment
+git rebase main          # Bring in latest changes from main
+git push --force-with-lease  # Safe force push (fails if remote changed)
+# PR approved → squash merge into main
+```
+
+---
+
+**Q3. How do you handle a large merge conflict in a collaborative team?**
+
+**Answer:**
+
+**Prevention (better than cure):**
+- Small, short-lived branches (merge often to avoid divergence)
+- Feature flags for long-running work
+- Clear file ownership (reduce same-file modification)
+- Communicate intent in standups ("I'm refactoring auth module this week")
+
+**Resolution workflow:**
+```bash
+# 1. Update your branch with latest main
+git fetch origin
+git rebase origin/main
+
+# 2. Conflict markers appear:
+<<<<<<< HEAD (your changes)
+    return $this->processPayment($amount);
+=======
+    return $this->handlePayment($amount, $currency);
+>>>>>>> origin/main (incoming changes)
+
+# 3. Use a merge tool
+git mergetool  # Opens configured diff tool (VS Code, IntelliJ)
+
+# 4. Mark resolved and continue
+git add src/PaymentService.php
+git rebase --continue
+
+# 5. If rebase gets complex, abort and try merge instead
+git rebase --abort
+git merge origin/main  # Creates a merge commit but simpler for complex conflicts
+```
+
+**For very large conflicts (structural refactors):**
+1. Identify the "winning" change with the other developer
+2. One person takes the other's branch as base, re-applies their changes manually
+3. Or: create a new branch from the common ancestor, apply changes one at a time
+
+---
+
+### 🔄 Advanced Operations
+
+**Q4. Explain `git cherry-pick`, `git bisect`, and `git reflog` — real-world use cases.**
+
+**Answer:**
+
+**`git cherry-pick`** — apply specific commit(s) to current branch
+```bash
+# Hotfix on main, also needed in v2.0 release branch
+git checkout release/v2.0
+git cherry-pick abc1234  # Apply the hotfix commit
+
+# Cherry-pick a range
+git cherry-pick abc1234..def5678
+
+# Real use: security patch applied to multiple maintained versions
+git checkout v1.x-security
+git cherry-pick $(git log main --grep="CVE-2024" --format="%H")
+```
+
+**`git bisect`** — binary search through commits to find regression
+```bash
+git bisect start
+git bisect bad          # Current commit is broken
+git bisect good v2.1.0  # This release was working
+
+# Git checks out midpoint commit
+# Test: does the bug exist?
+git bisect bad   # Still broken → bisect narrows down
+git bisect good  # Working → bisect goes the other way
+
+# Git tells you: "abc1234 is the first bad commit"
+git bisect reset  # Return to HEAD
+git show abc1234  # See what this commit changed
+```
+
+**`git reflog`** — recover "lost" commits (every HEAD change logged)
+```bash
+# Accidentally reset and lost commits
+git reset --hard HEAD~3  # "Lost" 3 commits
+
+# Recover with reflog
+git reflog
+# HEAD@{0}: reset: moving to HEAD~3
+# HEAD@{1}: commit: Add payment validation
+# HEAD@{2}: commit: Fix cart total
+# HEAD@{3}: commit: Add checkout flow
+
+git checkout HEAD@{3}        # Go to state before reset
+git checkout -b recovery-branch  # Save it as a branch
+# Or: git reset --hard HEAD@{3} to restore fully
+```
+
+---
+
+**Q5. How do you set up a Git workflow with CI/CD integration?**
+
+**Answer:**
+
+**Branch protection + automated gates:**
+```yaml
+# GitHub branch protection rules for 'main':
+# ✅ Require pull request reviews (1-2 approvals)
+# ✅ Require status checks to pass:
+#    - ci/tests (unit + integration)
+#    - ci/lint (code style)
+#    - ci/security-scan (SAST)
+# ✅ Require branches to be up to date before merging
+# ✅ Restrict who can push to main
+# ✅ Require signed commits (optional)
+```
+
+**GitHub Actions CI pipeline:**
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: test_db
+          MYSQL_ROOT_PASSWORD: root
+        options: --health-cmd="mysqladmin ping" --health-interval=10s
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3' }
+
+      - name: Cache Composer
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      - run: composer install --no-dev --optimize-autoloader
+      - run: cp .env.testing .env
+      - run: php artisan migrate --force
+      - run: php artisan test --parallel --coverage --min=80
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to production
+        run: |
+          ssh deploy@prod "cd /app && git pull && composer install --no-dev && php artisan migrate --force && php artisan config:cache"
+```
+
+---
+
+**Q6. What are Git submodules and Git subtrees — when should you use each?**
+
+**Answer:**
+
+**Git Submodules** — reference to another repo at a specific commit
+```bash
+# Add submodule
+git submodule add https://github.com/org/shared-lib.git lib/shared
+
+# Clone repo with submodules
+git clone --recurse-submodules https://github.com/org/myapp.git
+
+# Update all submodules
+git submodule update --remote --merge
+```
+
+**Git Subtrees** — merge another repo's history into a subdirectory
+```bash
+# Add subtree
+git subtree add --prefix=lib/shared https://github.com/org/shared-lib.git main --squash
+
+# Push changes back to shared-lib
+git subtree push --prefix=lib/shared https://github.com/org/shared-lib.git main
+```
+
+| Aspect | Submodules | Subtrees |
+|--------|-----------|---------|
+| **Complexity** | Higher (separate init/update steps) | Lower (normal git commands) |
+| **History** | Separate repo history | Merged into parent history |
+| **Collaboration** | Harder (everyone must submodule update) | Easier (transparent) |
+| **Push changes upstream** | Push to submodule repo directly | `git subtree push` |
+| **Best for** | Libraries you consume but rarely modify | Shared code you actively modify |
+
+**Monorepo alternative:** Both submodules and subtrees are workarounds. Consider a proper monorepo with Nx, Turborepo, or Bazel for shared code management at scale.

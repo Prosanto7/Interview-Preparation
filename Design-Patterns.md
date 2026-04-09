@@ -881,3 +881,336 @@ public function __construct(LoggerInterface $logger) {
 ---
 
 **Remember:** Design patterns are tools, not rules. Use them when appropriate, don't force them!
+
+---
+
+## 🎯 Design Patterns Interview Questions — Critical Scenarios
+
+---
+
+### 🏗️ Pattern Selection & Trade-offs
+
+**Q1. When does the Singleton pattern become an anti-pattern?**
+
+**Answer:**
+
+Singleton is often overused. It's appropriate for genuinely single-resource scenarios (logger, config loader) but becomes an anti-pattern when:
+
+**Problems with Singleton:**
+- **Hidden global state:** Any code can access the singleton, creating invisible dependencies
+- **Untestable:** Can't inject mock implementations (hard to test in isolation)
+- **Concurrency issues:** Shared mutable state across threads/requests without synchronization
+- **Violation of SRP:** Classes access singleton directly instead of through abstraction
+- **Lifecycle issues:** In long-running processes (Laravel Octane), singletons persist across requests — state bleeds between users
+
+```php
+// ❌ Anti-pattern: Singleton accessed globally
+class OrderService {
+    public function process(Order $order): void {
+        // Hidden dependency on singleton — can't mock in tests
+        $db = Database::getInstance();
+        $logger = Logger::getInstance();
+        $db->save($order);
+    }
+}
+
+// ✅ Better: Dependency injection (testable, explicit)
+class OrderService {
+    public function __construct(
+        private readonly DatabaseInterface $db,
+        private readonly LoggerInterface $logger,
+    ) {}
+
+    public function process(Order $order): void {
+        $this->db->save($order);
+    }
+}
+// Register as singleton in DI container — same instance, but injectable/mockable
+```
+
+**When Singleton IS appropriate:**
+- Database connection pool (one shared pool per process)
+- Configuration loaded once from env
+- Logger (writing to single output stream)
+- Service Container itself
+
+**Laravel Octane warning:**
+```php
+// ❌ Singleton holding request-specific data in Octane
+$this->app->singleton(CurrentUser::class, fn() => auth()->user());
+// First request's user leaked to second request!
+
+// ✅ Use scoped() — reset per request
+$this->app->scoped(CurrentUser::class, fn() => auth()->user());
+```
+
+---
+
+**Q2. Explain the difference between Strategy, State, and Command patterns with real-world examples.**
+
+**Answer:**
+
+All three encapsulate behavior — the key difference is **what drives the behavior change**.
+
+**Strategy — selectable algorithm:**
+```php
+// Context selects algorithm at construction/call time
+interface PaymentStrategy {
+    public function pay(float $amount): Receipt;
+}
+
+class StripeStrategy implements PaymentStrategy { ... }
+class PayPalStrategy implements PaymentStrategy { ... }
+
+class Checkout {
+    public function __construct(private PaymentStrategy $payment) {}
+    public function complete(float $amount): Receipt {
+        return $this->payment->pay($amount);  // Strategy chosen by caller
+    }
+}
+
+// Usage
+$checkout = new Checkout(new StripeStrategy());
+$checkout->complete(99.99);
+```
+
+**State — behavior changes based on internal state:**
+```php
+// Object changes its own behavior as state transitions occur
+interface OrderState {
+    public function ship(Order $order): void;
+    public function cancel(Order $order): void;
+}
+
+class PendingState implements OrderState {
+    public function ship(Order $order): void {
+        $order->setState(new ShippedState());
+    }
+    public function cancel(Order $order): void {
+        $order->setState(new CancelledState());
+    }
+}
+
+class ShippedState implements OrderState {
+    public function ship(Order $order): void {
+        throw new Exception("Already shipped");
+    }
+    public function cancel(Order $order): void {
+        // Initiate return process
+    }
+}
+```
+
+**Command — encapsulate operation as object (supports undo/queue):**
+```php
+interface Command {
+    public function execute(): void;
+    public function undo(): void;
+}
+
+class TransferMoneyCommand implements Command {
+    public function __construct(
+        private Account $from,
+        private Account $to,
+        private float $amount
+    ) {}
+
+    public function execute(): void {
+        $this->from->debit($this->amount);
+        $this->to->credit($this->amount);
+    }
+
+    public function undo(): void {
+        $this->to->debit($this->amount);
+        $this->from->credit($this->amount);
+    }
+}
+
+// Macro command — batch operations
+class MacroCommand implements Command {
+    private array $commands = [];
+    public function add(Command $cmd): void { $this->commands[] = $cmd; }
+    public function execute(): void { foreach ($this->commands as $c) $c->execute(); }
+    public function undo(): void { foreach (array_reverse($this->commands) as $c) $c->undo(); }
+}
+```
+
+| Pattern | Driven by | Undo support | Key use |
+|---------|----------|-------------|---------|
+| **Strategy** | Caller's choice | ❌ | Swap algorithms (payment, sorting) |
+| **State** | Internal state machine | ❌ | Order lifecycle, connection states |
+| **Command** | Encapsulated operation | ✅ | Undo/redo, queuing, transactions |
+
+---
+
+**Q3. When should you use Observer vs Event Bus vs Pub/Sub?**
+
+**Answer:**
+
+**Observer (direct, synchronous, same process):**
+```php
+// Subject directly calls observer methods
+interface Observer {
+    public function update(Event $event): void;
+}
+
+class OrderCreated {
+    private array $observers = [];
+
+    public function attach(Observer $observer): void {
+        $this->observers[] = $observer;
+    }
+
+    public function notify(): void {
+        foreach ($this->observers as $observer) {
+            $observer->update($this);  // Synchronous, direct call
+        }
+    }
+}
+```
+
+**Event Bus (decoupled, same process, framework-managed):**
+```php
+// Laravel Events — still same process, but decoupled via dispatcher
+event(new OrderPlaced($order));  // Fire and forget
+
+class SendConfirmationEmail implements ShouldQueue {
+    public function handle(OrderPlaced $event): void { ... }
+}
+// Listener registered in EventServiceProvider
+// Can run sync or async (via queue)
+```
+
+**Pub/Sub (different processes, across services):**
+```
+OrderService → publishes "order.created" to Kafka/SQS
+EmailService → subscribes to "order.created" from Kafka
+SMSService   → subscribes to "order.created" from Kafka
+(Services are completely decoupled, different codebases, different servers)
+```
+
+| Aspect | Observer | Event Bus | Pub/Sub |
+|--------|---------|----------|--------|
+| **Coupling** | Tight (knows observers) | Medium (knows event class) | Loose (string topic) |
+| **Scope** | Same object/class | Same process | Cross-process, cross-service |
+| **Async** | ❌ | Optional (queue) | ✅ Always |
+| **Delivery guarantee** | At-most-once | At-most-once | Configurable (at-least-once, exactly-once) |
+| **Use** | UI updates, model notifications | Domain events, Laravel events | Microservice integration |
+
+---
+
+**Q4. What is the Decorator pattern and how does it differ from inheritance?**
+
+**Answer:**
+
+Decorator adds behavior **at runtime** by wrapping objects. Inheritance adds behavior **at compile time** by extending classes.
+
+**Problem with inheritance:**
+```php
+// Combinatorial explosion with inheritance
+class Logger {}
+class TimestampLogger extends Logger {}
+class FileLogger extends Logger {}
+class TimestampFileLogger extends TimestampLogger {}  // Multiple inheritance needed!
+class TimestampFileEncryptedLogger extends ...?       // Gets out of hand
+```
+
+**Decorator solution:**
+```php
+interface Logger {
+    public function log(string $message): void;
+}
+
+class ConsoleLogger implements Logger {
+    public function log(string $message): void {
+        echo $message . PHP_EOL;
+    }
+}
+
+class TimestampDecorator implements Logger {
+    public function __construct(private Logger $logger) {}
+    public function log(string $message): void {
+        $this->logger->log('[' . date('Y-m-d H:i:s') . '] ' . $message);
+    }
+}
+
+class EncryptionDecorator implements Logger {
+    public function __construct(private Logger $logger) {}
+    public function log(string $message): void {
+        $this->logger->log(encrypt($message));
+    }
+}
+
+// Compose at runtime:
+$logger = new TimestampDecorator(
+    new EncryptionDecorator(
+        new ConsoleLogger()
+    )
+);
+$logger->log("User logged in");
+// Outputs: [2024-01-15 10:30:00] <encrypted>User logged in</encrypted>
+```
+
+**Real-world decorators:**
+- **HTTP middleware** (Laravel/PSR-15): Each middleware wraps the next
+- **PHP Streams:** `fopen()` → `zlib.deflate` → `GnuPG` → file
+- **Laravel Cache:** `FileStore` decorated by `TaggedCache`
+- **Guzzle HandlerStack:** HTTP client middleware chain
+
+---
+
+**Q5. Explain the Repository pattern and when it justifies the added abstraction.**
+
+**Answer:**
+
+Repository mediates between domain model and data mapping layer, providing collection-like interface for accessing domain objects.
+
+```php
+// Without Repository — Eloquent queries scattered everywhere
+class OrderController {
+    public function index() {
+        // Business logic mixed with DB query details everywhere
+        $orders = Order::where('status', 'pending')
+            ->where('created_at', '>', now()->subDays(7))
+            ->with('customer', 'items')
+            ->orderBy('created_at', 'desc')
+            ->get();
+    }
+}
+
+// With Repository
+interface OrderRepository {
+    public function findPendingOrdersFromLastWeek(): Collection;
+    public function findById(int $id): ?Order;
+    public function save(Order $order): void;
+}
+
+class EloquentOrderRepository implements OrderRepository {
+    public function findPendingOrdersFromLastWeek(): Collection {
+        return Order::where('status', 'pending')
+            ->where('created_at', '>', now()->subDays(7))
+            ->with('customer', 'items')
+            ->orderBy('created_at', 'desc')
+            ->get();
+    }
+}
+
+// Controller is now clean and DB-agnostic
+class OrderController {
+    public function __construct(private OrderRepository $orders) {}
+    public function index() {
+        return $this->orders->findPendingOrdersFromLastWeek();
+    }
+}
+```
+
+**Justified when:**
+- You need to swap data sources (DB → API, MySQL → MongoDB)
+- Complex queries appear in multiple places (DRY)
+- Testing requires different data backends (memory, SQLite)
+- Domain logic should not know about DB schema
+
+**Over-engineering when:**
+- Simple CRUD with one DB backend (Laravel Eloquent is good enough)
+- Small project with 1-2 developers
+- Just wrapping Eloquent methods 1:1 with no added value
