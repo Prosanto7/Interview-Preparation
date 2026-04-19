@@ -33,7 +33,37 @@ session(['user_id' => $user->id]);
 
 - ✅ **Pros:** Secure, server-controlled  
 - ❌ **Cons:** Doesn’t scale well for APIs; tied to server state
+### PHP/Laravel Implementation
 
+```php
+// Laravel session-based authentication
+public function login(Request $request)
+{
+    $credentials = $request->only('email', 'password');
+    
+    if (Auth::attempt($credentials)) {
+        $request->session()->regenerate();
+        return redirect()->intended('dashboard');
+    }
+    
+    return back()->withErrors(['email' => 'Invalid credentials']);
+}
+
+public function logout(Request $request)
+{
+    Auth::logout();
+    $request->session()->invalidate();
+    $request->session()->regenerateToken();
+    return redirect('/');
+}
+```
+
+### Real-Life Example
+- User logs into an e-commerce website (like Amazon)
+- Server creates a session storing user preferences and cart
+- Browser stores session ID in cookie
+- User browses multiple pages without re-authenticating
+- Session expires after inactivity or manual logout
 ---
 
 ## 🛡️ **2. CSRF Token (Cross-Site Request Forgery Token)**
@@ -51,6 +81,27 @@ session(['user_id' => $user->id]);
 
 - ✅ **Pros:** Crucial for web form security  
 - ❌ **Cons:** Not useful for APIs (for that, use CORS + tokens)
+
+### PHP/Laravel Implementation
+
+```php
+// In Blade template
+<form method="POST" action="/transfer-money">
+    @csrf
+    <input type="number" name="amount" required>
+    <input type="text" name="recipient" required>
+    <button type="submit">Transfer</button>
+</form>
+
+// Laravel automatically verifies CSRF token in VerifyCsrfToken middleware
+// No additional code needed for basic protection
+```
+
+### Real-Life Example
+- User is logged into their online banking account
+- They visit a malicious website that tries to submit a form to transfer money
+- The malicious form lacks the CSRF token, so the request is rejected
+- Legitimate forms on the bank's site include the token and succeed
 
 ---
 
@@ -72,6 +123,44 @@ session(['user_id' => $user->id]);
 - ✅ **Pros:** Stateless, ideal for APIs, scalable  
 - ❌ **Cons:** Cannot be easily revoked unless stored in a blocklist
 
+### PHP/Laravel Implementation
+
+```php
+// Using tymon/jwt-auth package
+use Tymon\JWTAuth\Facades\JWTAuth;
+
+public function login(Request $request)
+{
+    $credentials = $request->only('email', 'password');
+    
+    if (!$token = JWTAuth::attempt($credentials)) {
+        return response()->json(['error' => 'Unauthorized'], 401);
+    }
+    
+    return response()->json(compact('token'));
+}
+
+public function getUser()
+{
+    try {
+        $user = JWTAuth::parseToken()->authenticate();
+        return response()->json(['user' => $user]);
+    } catch (JWTException $e) {
+        return response()->json(['error' => 'Token invalid'], 401);
+    }
+}
+
+// Middleware to protect routes
+Route::middleware('jwt.auth')->get('/api/user', [UserController::class, 'getUser']);
+```
+
+### Real-Life Example
+- Mobile banking app authenticates user once
+- Receives JWT token valid for 15 minutes
+- Uses token for multiple API calls (balance check, transactions)
+- When token expires, uses refresh token to get new JWT
+- No need to re-enter credentials for each request
+
 ---
 
 ## 🔄 **4. OAuth Token**
@@ -88,6 +177,40 @@ Bearer eyJhbGciOi...
 
 - ✅ **Pros:** Delegated access, widely adopted  
 - ❌ **Cons:** Complex flow (especially for beginners)
+
+### PHP/Laravel Implementation
+
+```php
+// Using Laravel Socialite
+use Laravel\Socialite\Facades\Socialite;
+
+Route::get('/auth/redirect', function () {
+    return Socialite::driver('google')->redirect();
+});
+
+Route::get('/auth/callback', function () {
+    $user = Socialite::driver('google')->user();
+    
+    // Find or create user
+    $authUser = User::updateOrCreate([
+        'email' => $user->getEmail(),
+    ], [
+        'name' => $user->getName(),
+        'google_id' => $user->getId(),
+    ]);
+    
+    Auth::login($authUser);
+    
+    return redirect('/dashboard');
+});
+```
+
+### Real-Life Example
+- User clicks "Login with Google" on a news website
+- Redirected to Google for authentication
+- Grants permission for the news site to access basic profile
+- Google issues OAuth token to news site
+- News site can now access user's name and email from Google
 
 ---
 
@@ -108,6 +231,39 @@ Bearer eyJhbGciOi...
 - ✅ **Pros:** Better user experience  
 - ❌ **Cons:** Must be securely stored (e.g., in HttpOnly cookies)
 
+### PHP/Laravel Implementation
+
+```php
+// Using Laravel Passport or Sanctum
+public function refreshToken(Request $request)
+{
+    $refreshToken = $request->cookie('refresh_token');
+    
+    // Validate refresh token
+    $token = PersonalAccessToken::findToken($refreshToken);
+    
+    if (!$token || $token->cant('*')) {
+        return response()->json(['error' => 'Invalid refresh token'], 401);
+    }
+    
+    // Generate new tokens
+    $newAccessToken = $token->tokenable->createToken('access')->accessToken;
+    $newRefreshToken = $token->tokenable->createToken('refresh', ['*'])->accessToken;
+    
+    // Revoke old refresh token
+    $token->delete();
+    
+    return response()->json(['access_token' => $newAccessToken])
+        ->cookie('refresh_token', $newRefreshToken, 60*24*30, '/', null, true, true);
+}
+```
+
+### Real-Life Example
+- User logs into a mobile app and receives access token (15min) and refresh token (30 days)
+- App uses access token for API calls
+- When access token expires, app automatically uses refresh token to get new pair
+- User stays logged in for months without re-entering credentials
+
 ---
 
 ## 🧪 **6. API Key**
@@ -122,6 +278,34 @@ GET /data?api_key=abc123
 - ✅ **Pros:** Easy to implement  
 - ❌ **Cons:** No user context; can be stolen if exposed
 
+### PHP/Laravel Implementation
+
+```php
+// API Key middleware
+class ApiKeyMiddleware
+{
+    public function handle($request, Closure $next)
+    {
+        $apiKey = $request->header('X-API-Key') ?? $request->query('api_key');
+        
+        if (!$apiKey || !ApiKey::where('key', $apiKey)->where('active', true)->exists()) {
+            return response()->json(['error' => 'Invalid API key'], 401);
+        }
+        
+        return $next($request);
+    }
+}
+
+// Usage in routes
+Route::middleware('api.key')->get('/api/data', [DataController::class, 'index']);
+```
+
+### Real-Life Example
+- Weather app uses OpenWeatherMap API
+- Developer registers and gets API key: `abc123def456`
+- App includes key in every API request: `GET /weather?api_key=abc123def456&q=London`
+- API server validates key and returns weather data
+
 ---
 
 ## 👤 **7. Personal Access Token (PAT)**
@@ -135,6 +319,34 @@ Authorization: Bearer YOUR_PERSONAL_ACCESS_TOKEN
 
 - ✅ **Pros:** Fine-grained access; user-specific  
 - ❌ **Cons:** Should be treated like a password
+
+### PHP/Laravel Implementation
+
+```php
+// Using Laravel Sanctum
+$user = User::find(1);
+
+// Create personal access token
+$token = $user->createToken('My App', ['read', 'write'])->plainTextToken;
+
+// Use token in API requests
+// Authorization: Bearer 1|abc123...
+
+// Validate token and scopes
+Route::middleware('auth:sanctum')->get('/api/posts', function (Request $request) {
+    if (!$request->user()->tokenCan('read')) {
+        return response()->json(['error' => 'Insufficient permissions'], 403);
+    }
+    
+    return Post::all();
+});
+```
+
+### Real-Life Example
+- Developer creates GitHub personal access token for repository access
+- Grants specific permissions (read repo, write issues)
+- Uses token in Git commands or API calls instead of password
+- Can revoke token if compromised without changing password
 
 ---
 
@@ -437,3 +649,291 @@ CSRF Token Defense:
 // In Session config
 'same_site' => 'strict',
 ```
+
+---
+
+## 🎯 Additional Tokens Interview Questions
+
+---
+
+### Q7. How do you implement token blacklisting for JWT logout?
+
+**Answer:**
+
+For JWT tokens that are stateless by design, implement a blacklist to enable logout:
+
+```php
+// Store invalidated tokens in Redis/cache
+class TokenBlacklist
+{
+    public static function add($token)
+    {
+        $payload = JWT::decode($token, config('jwt.secret'), false, ['HS256']);
+        $ttl = $payload->exp - time();
+        
+        Cache::put('blacklist:' . hash('sha256', $token), true, $ttl);
+    }
+    
+    public static function has($token)
+    {
+        return Cache::has('blacklist:' . hash('sha256', $token));
+    }
+}
+
+// In logout endpoint
+public function logout(Request $request)
+{
+    $token = $request->bearerToken();
+    TokenBlacklist::add($token);
+    
+    return response()->json(['message' => 'Logged out']);
+}
+
+// In middleware
+if (TokenBlacklist::has($token)) {
+    return response()->json(['error' => 'Token revoked'], 401);
+}
+```
+
+**Trade-offs:**
+- Adds state (not purely stateless)
+- Requires storage (Redis recommended)
+- Performance impact (extra cache check)
+
+---
+
+### Q8. Explain API key vs JWT vs OAuth for service-to-service authentication.
+
+**Answer:**
+
+| Aspect | API Key | JWT | OAuth |
+|--------|---------|-----|-------|
+| **Use Case** | Simple service auth | User + service auth | Delegated user access |
+| **Security** | Shared secret | Signed claims | Token exchange |
+| **Revocation** | Manual | Blacklist or short TTL | Token revocation endpoint |
+| **User Context** | None | Built-in | Via scopes/claims |
+| **Complexity** | Low | Medium | High |
+
+**Choose API Key when:**
+- Simple integrations (webhooks, monitoring)
+- No user context needed
+- Easy management
+
+**Choose JWT when:**
+- Need user identity in service calls
+- Microservices architecture
+- Stateless preferred
+
+**Choose OAuth when:**
+- Third-party access to your APIs
+- Complex permission models
+- Industry standard compliance
+
+---
+
+### Q9. How do you secure tokens in a mobile application?
+
+**Answer:**
+
+**iOS (Keychain):**
+```swift
+// Store refresh token securely
+KeychainWrapper.standard.set(refreshToken, forKey: "refresh_token")
+
+// Use access token in memory only
+class TokenManager {
+    private var accessToken: String?
+    
+    func getAccessToken() -> String? {
+        if isExpired() {
+            refreshToken()
+        }
+        return accessToken
+    }
+}
+```
+
+**Android (SharedPreferences + Encryption):**
+```kotlin
+// Encrypted SharedPreferences for refresh token
+val masterKey = MasterKey.Builder(context)
+    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+    .build()
+
+val sharedPrefs = EncryptedSharedPreferences.create(
+    context,
+    "secure_prefs",
+    masterKey,
+    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+)
+
+sharedPrefs.edit().putString("refresh_token", token).apply()
+```
+
+**General Best Practices:**
+- Store refresh tokens persistently and securely
+- Keep access tokens in memory only
+- Implement certificate pinning
+- Use OAuth 2.0 PKCE flow
+- Implement token rotation
+- Handle token expiry gracefully
+
+---
+
+### Q10. What are the security considerations for personal access tokens?
+
+**Answer:**
+
+**Generation:**
+- Use cryptographically secure random generation
+- Sufficient entropy (256+ bits)
+- Unique per user/application
+
+**Storage:**
+- Never store in code/config files
+- Use environment variables or secure vaults
+- Rotate regularly (90 days max)
+
+**Permissions:**
+- Principle of least privilege
+- Granular scopes (read, write, admin)
+- Time-limited tokens when possible
+
+**Monitoring:**
+- Log token usage
+- Alert on suspicious activity
+- Implement rate limiting
+
+**Revocation:**
+- Immediate revocation capability
+- Audit trail for revocations
+- Notify users of token creation/revocation
+
+```php
+// Laravel Sanctum PAT with scopes
+$token = $user->createToken('GitHub Integration', ['repo:read', 'user:email']);
+
+// Check permissions
+if ($request->user()->tokenCan('repo:write')) {
+    // Allow write operations
+}
+```
+
+---
+
+### Q11. How does token introspection work in OAuth 2.0?
+
+**Answer:**
+
+Token introspection (RFC 7662) allows resource servers to validate opaque tokens:
+
+```
+Client Request:
+POST /oauth/introspect
+Authorization: Bearer <client_credentials>
+Content-Type: application/x-www-form-urlencoded
+
+token=abc123&token_type_hint=access_token
+
+Server Response:
+{
+  "active": true,
+  "client_id": "client_123",
+  "sub": "user_456",
+  "scope": "read write",
+  "exp": 1700000000,
+  "iss": "https://auth.example.com"
+}
+```
+
+**Implementation:**
+```php
+class TokenIntrospection
+{
+    public function introspect($token)
+    {
+        $response = Http::withHeaders([
+            'Authorization' => 'Basic ' . base64_encode('client_id:client_secret')
+        ])->post('https://auth.example.com/oauth/introspect', [
+            'token' => $token,
+            'token_type_hint' => 'access_token'
+        ]);
+        
+        return $response->json();
+    }
+}
+
+// In API middleware
+$introspection = $this->introspect($request->bearerToken());
+
+if (!$introspection['active']) {
+    return response()->json(['error' => 'Invalid token'], 401);
+}
+
+// Use claims for authorization
+$userId = $introspection['sub'];
+$scopes = explode(' ', $introspection['scope']);
+```
+
+**When to use:**
+- Opaque tokens (not JWT)
+- Centralized token management
+- Need real-time revocation
+- Complex authorization logic
+
+---
+
+### Q12. Explain the difference between Bearer tokens and MAC tokens.
+
+**Answer:**
+
+**Bearer Tokens:**
+- Possession = Authorization
+- Anyone with the token can use it
+- Simple to implement
+- Vulnerable to theft
+
+**MAC (Message Authentication Code) Tokens:**
+- Signed requests using shared secret
+- Token + signature required
+- Protects against token theft
+- More complex implementation
+
+**MAC Token Flow:**
+```
+1. Client has token: abc123
+2. Shared secret: secret_key
+3. For request: GET /api/data
+4. Create signature: HMAC-SHA256(secret_key, "GET /api/data timestamp")
+5. Send headers:
+   Authorization: MAC token="abc123", signature="hmac_signature", timestamp="1234567890"
+```
+
+**Laravel Implementation:**
+```php
+class MacTokenMiddleware
+{
+    public function handle($request, Closure $next)
+    {
+        $token = $request->header('Authorization');
+        // Parse MAC token, timestamp, signature
+        
+        $expectedSignature = hash_hmac('sha256', 
+            $request->method() . $request->fullUrl() . $timestamp, 
+            $sharedSecret
+        );
+        
+        if (!hash_equals($expectedSignature, $signature)) {
+            return response()->json(['error' => 'Invalid signature'], 401);
+        }
+        
+        return $next($request);
+    }
+}
+```
+
+**Use MAC tokens when:**
+- High security requirements
+- Protection against token replay
+- Shared secret distribution is feasible
